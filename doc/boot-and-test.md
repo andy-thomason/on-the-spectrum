@@ -55,7 +55,7 @@ src/
   bin/
     zxdis.rs        — standalone disassembler over a binary
     zxheadless.rs   — headless runner: boot N frames, dump screen/trace
-  main.rs           — the Bevy app (see ui.md)
+    zxbevy.rs       — the Bevy app (see ui.md), behind the `ui` feature
 tests/
   decode.rs         — every opcode against the generated spec tables
   timing.rs         — every opcode's T-state total against the spec's timing column

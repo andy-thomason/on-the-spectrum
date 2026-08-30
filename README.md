@@ -6,15 +6,16 @@ A traceable Z80 interpreter built directly from the instruction spec, a disassem
 sharing the same decoder for tracing and debugging, and a [Bevy](https://bevyengine.org)
 front end with the display, typed at from the host keyboard.
 
-**Status:** stages A–E complete — **the emulator works**. One decoder for all 1792 opcodes,
-checked against the generated spec tables; a disassembler that agrees with the annotated
-ROM listing; an interpreter that spends every T-state through the machine-cycle
-primitives and passes all **1,604,000**
+**Status:** stages A–E complete and stage F running — **the emulator works, in a
+window**. One decoder for all 1792 opcodes, checked against the generated spec tables; a
+disassembler that agrees with the annotated ROM listing; an interpreter that spends every
+T-state through the machine-cycle primitives and passes all **1,604,000**
 [SingleStepTests](https://github.com/SingleStepTests/z80) per-opcode cases — registers,
 memory, MEMPTR, `Q`, ports and the bus state of every individual T-state; and a machine
 that runs the real 48K ROM to the copyright message, into the main loop, and on to a
 BASIC prompt that answers `PRINT 2+2` with `4` — typed on the key matrix, headlessly.
-Next is stage F: the Bevy front end.
+`zxbevy` puts that behind a window: the frame rendered to RGBA, paced against real time,
+with the host keyboard driving the matrix. Next: snapshots, sound and tape.
 
 ## Documentation
 
@@ -53,6 +54,7 @@ Primary reference material is mirrored under [doc/ref/](doc/ref/).
 ```sh
 cargo build
 cargo test                                   # see "Tests" below
+cargo run --release --features ui --bin zxbevy   # the emulator, in a window
 cargo run --bin zxheadless                   # boot the ROM and print the screen
 cargo run --bin zxdis -- roms/48.rom         # disassemble the ROM
 cargo run --bin zxdis -- --start 11CB --end 1220 roms/48.rom
@@ -127,6 +129,16 @@ Z80_VECTORS_FILTER="dd cb" Z80_VECTORS_CASES=50 cargo test --test z80_json
 ```
 
 Without them `tests/z80_json.rs` skips and everything else still runs.
+
+Bevy is an optional dependency behind the `ui` feature and the emulator core does not use
+it, so `cargo test` never builds it. The window itself is checkable from a terminal:
+
+```sh
+ZXBEVY_SCREENSHOT=/tmp/shot.png cargo run --features ui --bin zxbevy
+```
+
+boots for three seconds, saves what the GPU actually drew, and quits — which is the only
+way to tell a correct frame buffer from a correctly *displayed* one.
 
 ## Licences and credits
 

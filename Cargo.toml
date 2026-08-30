@@ -4,6 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# The UI only. The emulator core has no Bevy dependency and is not built with one, which
+# is what keeps `cargo test` at seconds rather than minutes:
+#
+#     cargo run --release --features ui --bin zxbevy
+# Bevy's own curated feature set for a 2D app — `bevy_sprite` is the component, and
+# `bevy_sprite_render` (a separate crate since 0.17) is what actually draws it. Picking a
+# feature list by hand gets you a window that renders nothing, silently.
+bevy = { version = "0.19", optional = true, default-features = false, features = ["2d"] }
+
+[features]
+default = []
+ui = ["dep:bevy"]
+
+[[bin]]
+name = "zxbevy"
+required-features = ["ui"]
 
 [dev-dependencies]
 serde_json = "1.0.151"

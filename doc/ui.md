@@ -8,6 +8,14 @@ library with no Bevy dependency (see [boot-and-test.md](boot-and-test.md) §2).
 are structural — check exact type and system names against the 0.19 migration guide
 when you write them, since Bevy's API moves between releases.
 
+**Take Bevy's own `2d` feature group rather than hand-picking features.** Since 0.17 the
+drawing half of sprites lives in its own crate: `bevy_sprite` gives you the `Sprite`
+component, and `bevy_sprite_render` is what puts it on the screen. Enable the first
+without the second and you get a window, a camera, a sprite entity that reports the right
+size and visibility, a texture whose pixels are demonstrably correct — and a black screen,
+with no warning anywhere. `features = ["2d"]` is the curated set and cannot go wrong that
+way.
+
 ## 1. Shape of the app
 
 ```
