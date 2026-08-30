@@ -172,6 +172,16 @@ impl Machine {
         screen::screen_to_text(&self.bus.memory)
     }
 
+    /// Render the visible frame — display and border — into `out` as RGBA.
+    pub fn render_into(&self, out: &mut [u8]) {
+        screen::render_into(
+            &self.bus.memory,
+            self.bus.ula.border,
+            Ula::flash_inverted(self.bus.frames),
+            out,
+        );
+    }
+
     // ------------------------------------------------------------------------- typing
 
     /// Press a chord, hold it, release it, and let the machine settle.

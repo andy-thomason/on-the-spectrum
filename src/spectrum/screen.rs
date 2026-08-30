@@ -86,3 +86,85 @@ pub fn screen_lines(memory: &Memory) -> Vec<String> {
         .filter(|line| !line.is_empty())
         .collect()
 }
+
+// ------------------------------------------------------------------------- rendering
+
+/// The visible frame the ULA emits: the 256 × 192 display with a border around it.
+pub const BORDER_LEFT: usize = 48;
+pub const BORDER_TOP: usize = 48;
+pub const BORDER_RIGHT: usize = 48;
+pub const BORDER_BOTTOM: usize = 56;
+pub const WIDTH: usize = BORDER_LEFT + COLUMNS * 8 + BORDER_RIGHT;
+pub const HEIGHT: usize = BORDER_TOP + ROWS * 8 + BORDER_BOTTOM;
+/// Bytes in a rendered frame, RGBA.
+pub const FRAME_BYTES: usize = WIDTH * HEIGHT * 4;
+
+/// The colour level used for the non-bright palette. Real machines vary; `0xD7` is the
+/// common convention and what Fuse uses.
+pub const NORMAL_LEVEL: u8 = 0xD7;
+
+/// One of the eight colours, bright or not.
+///
+/// Bit 0 of the index is blue, bit 1 red, bit 2 green — so bright black is still black,
+/// and there are fifteen distinct colours rather than sixteen.
+pub fn colour(index: u8, bright: bool) -> [u8; 3] {
+    let level = if bright { 0xFF } else { NORMAL_LEVEL };
+    let on = |bit: u8| if index & bit != 0 { level } else { 0 };
+    [on(2), on(4), on(1)]
+}
+
+/// Ink and paper for an attribute byte, swapped if this cell is flashing and the ULA is
+/// currently in its inverted phase.
+pub fn ink_paper(attribute: u8, flash_inverted: bool) -> ([u8; 3], [u8; 3]) {
+    let bright = attribute & 0x40 != 0;
+    let ink = colour(attribute & 0x07, bright);
+    let paper = colour((attribute >> 3) & 0x07, bright);
+    if flash_inverted && attribute & 0x80 != 0 {
+        (paper, ink)
+    } else {
+        (ink, paper)
+    }
+}
+
+/// Render the whole visible frame into `out` as RGBA, top row first.
+///
+/// A whole-frame renderer: it reads the display file as it stands now, so a program that
+/// changes the border or the display part-way down a frame is drawn as though it had not.
+/// That is what the beam renderer in phase H replaces, and it is the only thing here that
+/// phase H changes.
+pub fn render_into(memory: &Memory, border: u8, flash_inverted: bool, out: &mut [u8]) {
+    assert_eq!(out.len(), FRAME_BYTES, "frame buffer is the wrong size");
+
+    let border_rgb = colour(border & 0x07, false);
+    for pixel in out.chunks_exact_mut(4) {
+        pixel[0] = border_rgb[0];
+        pixel[1] = border_rgb[1];
+        pixel[2] = border_rgb[2];
+        pixel[3] = 0xFF;
+    }
+
+    for row in 0..ROWS {
+        for col in 0..COLUMNS {
+            let (ink, paper) = ink_paper(memory.peek(attribute_address(col, row)), flash_inverted);
+            for line in 0..8 {
+                let bits = memory.peek(pixel_address(col, row, line));
+                let y = BORDER_TOP + row * 8 + line;
+                let x = BORDER_LEFT + col * 8;
+                let start = (y * WIDTH + x) * 4;
+                for bit in 0..8 {
+                    // The most significant bit is the leftmost pixel.
+                    let rgb = if bits & (0x80 >> bit) != 0 {
+                        ink
+                    } else {
+                        paper
+                    };
+                    let p = start + bit * 4;
+                    out[p] = rgb[0];
+                    out[p + 1] = rgb[1];
+                    out[p + 2] = rgb[2];
+                    out[p + 3] = 0xFF;
+                }
+            }
+        }
+    }
+}

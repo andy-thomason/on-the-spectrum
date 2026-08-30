@@ -12,7 +12,7 @@
 
 use std::process::ExitCode;
 
-use on_the_spectrum::spectrum::Machine;
+use on_the_spectrum::spectrum::{Machine, screen};
 use on_the_spectrum::symbols::RomSymbols;
 use on_the_spectrum::z80::Symbols;
 
@@ -25,6 +25,7 @@ usage: zxheadless [--rom PATH] [--frames N] [--until ADDR] [--state] [--raw]
   --type TEXT    boot to the BASIC prompt, then type this and run on
   --state        print the CPU state as well as the screen
   --raw          print all 24 screen lines, blanks included
+  --ppm PATH     also write the rendered frame as a binary PPM image
 
 At the K prompt a letter key is a whole keyword, so --type 'P2+2\n' types
 PRINT 2+2 and presses ENTER. \n in the text is ENTER.
@@ -41,6 +42,7 @@ struct Args {
     text: Option<String>,
     state: bool,
     raw: bool,
+    ppm: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -110,6 +112,14 @@ fn main() -> ExitCode {
         );
     }
 
+    if let Some(path) = &args.ppm {
+        if let Err(e) = write_ppm(&machine, path) {
+            eprintln!("zxheadless: {path}: {e}");
+            return ExitCode::FAILURE;
+        }
+        println!("wrote {path}  {}x{}", screen::WIDTH, screen::HEIGHT);
+    }
+
     println!("┌{}┐", "─".repeat(32));
     for line in machine.screen_text() {
         if args.raw || !line.trim().is_empty() {
@@ -125,6 +135,17 @@ fn main() -> ExitCode {
     }
 }
 
+/// The rendered frame as a binary PPM: three bytes a pixel behind a nine-byte header, and
+/// every image viewer on the machine can open it.
+fn write_ppm(machine: &Machine, path: &str) -> std::io::Result<()> {
+    let mut frame = vec![0; screen::FRAME_BYTES];
+    machine.render_into(&mut frame);
+
+    let mut out = format!("P6\n{} {}\n255\n", screen::WIDTH, screen::HEIGHT).into_bytes();
+    out.extend(frame.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]));
+    std::fs::write(path, out)
+}
+
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         rom: "roms/48.rom".to_string(),
@@ -133,6 +154,7 @@ fn parse_args() -> Result<Args, String> {
         text: None,
         state: false,
         raw: false,
+        ppm: None,
     };
 
     let mut argv = std::env::args().skip(1);
@@ -149,6 +171,7 @@ fn parse_args() -> Result<Args, String> {
             "--type" => args.text = Some(value()?.replace("\\n", "\n")),
             "--state" => args.state = true,
             "--raw" => args.raw = true,
+            "--ppm" => args.ppm = Some(value()?),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);

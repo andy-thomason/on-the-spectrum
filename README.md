@@ -109,6 +109,7 @@ python3 doc/tools/gen_z80.py rust-fixture > tests/fixtures/opcodes.rs
 | `tests/listing.rs` | `zxdis roms/48.rom` says the same thing as the annotated ROM disassembly at every labelled address it reaches |
 | `tests/timing.rs` | Every opcode's T-state total, on both arms of every conditional, matches the spec's timing column — which the interpreter never consults |
 | `tests/z80_json.rs` | The SingleStepTests per-opcode vectors: 1000 cases each for 1604 instruction sequences, checked down to the bus state of each T-state |
+| `tests/render.rs` | The frame renderer: the palette, the border, ink and paper from a real booted screen, and FLASH inverting exactly one cell |
 | `tests/boot.rs` | Boot milestones 1–12: the reset vector, the RAM test, `RAMTOP`, the system variables, the stream table, `CLS`, the copyright message, the main loop, `FRAMES` counting one per interrupt, the flashing cursor, typing into the edit line, and `PRINT 2+2` answering `4` |
 
 The vectors are 1.3 GB expanded and are not in the repository:
