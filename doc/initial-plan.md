@@ -1,8 +1,8 @@
 # A Sinclair ZX Spectrum 48K emulator — initial plan
 
 Build a cycle-aware ZX Spectrum 48K emulator in Rust: a traceable Z80 interpreter, a
-disassembler for debugging, and a Bevy front end with the display and a clickable
-keyboard photographed from the real machine.
+disassembler for debugging, and a Bevy front end with the display, driven from the host
+keyboard.
 
 ## Documents
 
@@ -15,7 +15,7 @@ keyboard photographed from the real machine.
 | [spectrum-keyboard.md](spectrum-keyboard.md) | The 8×5 matrix, half-row port addresses, ROM key codes, host mapping |
 | [spectrum-video.md](spectrum-video.md) | Display file address arithmetic, attributes, palette, frame and line timing, rendering strategies |
 | [boot-and-test.md](boot-and-test.md) | Core design: decoder, interpreter, disassembler, tracing, and the five-layer test strategy ending in ROM boot milestones |
-| [ui.md](ui.md) | The Bevy app: screen texture, emulation pacing, clickable keyboard, debug panels |
+| [ui.md](ui.md) | The Bevy app: screen texture, emulation pacing, host keyboard input, debug panels |
 
 ## Materials gathered
 
@@ -29,7 +29,6 @@ keyboard photographed from the real machine.
 | **Z80 decode algorithm** | [`ref/z80-decoding.htm`](ref/z80-decoding.htm) | Cristian Dinu — the structure the interpreter mirrors |
 | **Z80 flags / interrupts** | [`ref/z80reference.htm`](ref/z80reference.htm) | c.s.s FAQ Z80A section |
 | **Machine-cycle breakdown** | [`ref/z80ins.txt`](ref/z80ins.txt) | Per-instruction M-cycle sequences |
-| **Machine photograph** | [`../assets/zx-spectrum-48k.jpg`](../assets/zx-spectrum-48k.jpg) | 2168×1593, CC BY-SA 2.5, Bill Bertram — see [CREDITS.md](../assets/CREDITS.md) |
 | **Opcode table generator** | [`tools/gen_z80.py`](tools/gen_z80.py) | Emits the tables in the spec; will also emit the Rust decode fixtures |
 
 ## The machine, in one table
@@ -89,7 +88,7 @@ Each phase ends in something demonstrable. Detail for A–H is in
 | **C** | Memory, ROM protection, `Machine` | Headless boot reaches `CLS`: display file zeroed, attributes all `0x38` |
 | **D** | ULA — port `0xFE`, 50 Hz interrupt, frame timing | The copyright message renders; `FRAMES` at `0x5C78` advances correctly |
 | **E** | Keyboard matrix | Type `PRINT 2+2` headlessly, get `4`. **This is "the emulator works."** |
-| **F** | Bevy shell — screen, pacing, clickable keyboard | Usable interactively |
+| **F** | Bevy shell — screen, pacing, host keyboard | Usable interactively |
 | **G** | Snapshots, tape, beeper | Load a `.z80` of a real game and play it with sound |
 | **H** | Contention, floating bus, beam renderer | Patrik Rak's Z80 test suite passes on-emulator |
 
@@ -144,6 +143,14 @@ read `CALL $0D6B ; CLS`. Highest debugging value per line of code in the whole p
 accounting above is identical whether `contention()` returns a delay or zero. Deferring
 contention is therefore deferring one function and one flag, not deferring the design.
 
+**Host keyboard, not a clickable photograph.** A departure from
+[the original brief](original-prompt.md), which asked for a keyboard built from an image
+of the real machine. A photograph needs a picking mask, a highlight shader, sticky shift
+keys — one pointer cannot hold CAPS SHIFT and `0` at once — and a share-alike obligation
+on the image, all in service of a slower way to type than the keyboard already under the
+user's hands. The emulator wants eight bytes; the host keyboard produces them directly,
+and `zxheadless` already types `PRINT 2+2` down that same path. See [ui.md](ui.md) §4.
+
 ## Risks
 
 | Risk | Mitigation |
@@ -152,11 +159,9 @@ contention is therefore deferring one function and one flag, not deferring the d
 | **Per-instruction cycle totals instead of machine cycles** — the tempting shortcut in phase B. Contention then cannot be placed, and phase H becomes a rewrite of every instruction | Build the five M-cycle primitives *first*, in `z80/cycles.rs`, and make every instruction spend time only through them. The SingleStepTests vectors include cycle-by-cycle bus activity, so a shortcut fails phase B rather than surviving to phase H |
 | **Frame-boundary drift** — resetting the T-state counter to zero at each frame, when instructions almost never land exactly on 69888 | Carry the overshoot: `frame_t -= 69888`. Otherwise timing slips a few T every frame |
 | **Timing drift** — running one emulated frame per rendered frame | Time accumulator in [ui.md](ui.md) §2. 69888 T at 3.5 MHz is 19.968 ms, not 20 ms, and not the host refresh rate |
-| **Perspective photo vs. rectangular hit regions** — the chosen image is a three-quarter view | Picking-mask approach ([ui.md](ui.md) §4): a same-size PNG with each key flood-filled with a unique id. No geometry maths, and it doubles as the highlight mask |
 | **Blurry screen** — linear filtering and fractional scaling destroy 1-pixel strokes | Nearest sampling plus integer scale factors, verified in UI step 1 before the CPU is involved |
 | **Bevy 0.19 API drift** — 0.19 postdates the API details assumed in the sketches | Treat [ui.md](ui.md) code as structural. Check names against the 0.19 migration guide; the architecture does not depend on them |
 | **Docs and code drifting apart** | The decode fixture test diffs the implementation against the generated spec tables, so drift is a test failure rather than a stale document |
-| **Asset licence obligations** — the photo is CC BY-SA 2.5 | Recorded in [CREDITS.md](../assets/CREDITS.md) now. Attribution must be user-visible; derivatives of the *image* inherit share-alike. A CC BY 3.0 alternative is noted there if this becomes awkward |
 | **ROM redistribution** — Amstrad permit bundling, they did not release to public domain | Keep the ROM's internal copyright notice intact; state the permission in `CREDITS.md`; do not claim public domain |
 
 ## Immediate next steps

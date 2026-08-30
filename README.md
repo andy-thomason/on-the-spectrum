@@ -4,8 +4,7 @@ A Sinclair ZX Spectrum 48K emulator in Rust.
 
 A traceable Z80 interpreter built directly from the instruction spec, a disassembler
 sharing the same decoder for tracing and debugging, and a [Bevy](https://bevyengine.org)
-front end with the display and a clickable keyboard built from a photograph of the real
-machine.
+front end with the display, typed at from the host keyboard.
 
 **Status:** stages A–E complete — **the emulator works**. One decoder for all 1792 opcodes,
 checked against the generated spec tables; a disassembler that agrees with the annotated
@@ -23,7 +22,7 @@ Next is stage F: the Bevy front end.
 |---|---|
 | [doc/initial-plan.md](doc/initial-plan.md) | Architecture, phases, decisions, risks — **start here** |
 | [doc/boot-and-test.md](doc/boot-and-test.md) | The core: decoder, T-state model, interpreter, disassembler, tracing, test strategy |
-| [doc/ui.md](doc/ui.md) | The Bevy app: screen, emulation pacing, clickable keyboard, debug panels |
+| [doc/ui.md](doc/ui.md) | The Bevy app: screen, emulation pacing, host keyboard input, debug panels |
 | [doc/z80-instruction-set.md](doc/z80-instruction-set.md) | Z80 reference: flags, MEMPTR, interrupts, decode algorithm, complete opcode tables |
 | [doc/spectrum-memory-map.md](doc/spectrum-memory-map.md) | Memory map, ROM entry points, system variables, port `0xFE`, contention, tape format |
 | [doc/spectrum-video.md](doc/spectrum-video.md) | Display file layout, attributes, palette, frame and line timing |
@@ -136,6 +135,7 @@ belong to others — see [assets/CREDITS.md](assets/CREDITS.md) for full attribu
 - **`roms/48.rom`** — the Sinclair 48K ROM, copyright Amstrad plc, who permit
   redistribution with emulators provided the copyright notice within the image remains
   intact. It is *not* public domain.
-- **`assets/zx-spectrum-48k.jpg`** — photograph by Bill Bertram, CC BY-SA 2.5.
+- **`assets/zx-spectrum-48k.jpg`** — photograph by Bill Bertram, CC BY-SA 2.5. No longer
+  used by the emulator; kept only as a reference picture of the machine.
 - **`doc/ref/`** — third-party technical documents, retained for reference and
   attributed to their authors in `assets/CREDITS.md`.

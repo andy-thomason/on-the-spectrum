@@ -2,23 +2,21 @@
 
 ## `zx-spectrum-48k.jpg`
 
-Photograph of a Sinclair ZX Spectrum 48K.
+Photograph of a Sinclair ZX Spectrum 48K. **Not used by the emulator** — the front end
+takes its input from the host keyboard rather than from a clickable image, so this is
+kept only as a reference picture of the machine. It is still redistributed in this
+repository, so the attribution below still stands.
 
 - **Author:** Bill Bertram (Wikimedia Commons user
   [Pixel8](https://commons.wikimedia.org/wiki/User:Pixel8))
 - **Source:** [File:ZXSpectrum48k.jpg](https://commons.wikimedia.org/wiki/File:ZXSpectrum48k.jpg)
 - **Licence:** [CC BY-SA 2.5](https://creativecommons.org/licenses/by-sa/2.5/)
 
-**Obligations.** Attribution must be visible to users (About dialog and this file).
-Any *modified version of this image* — including a derived key-picking mask that
-incorporates the photo, or a rectified/warped copy — must be released under CC BY-SA 2.5
-or a compatible licence. This applies to the image and its derivatives, not to the
-emulator's source code.
-
-If the share-alike condition becomes inconvenient, the alternatives are
-[File:ZX Spectrum 48 K (ubt).JPG](https://commons.wikimedia.org/wiki/File:ZX_Spectrum_48_K_(ubt).JPG)
-by Tomasz Sienicki (CC BY 3.0, attribution only, no share-alike), or drawing an original
-faceplate as SVG.
+**Obligations.** Attribution for redistributing the file, which is this entry. The
+share-alike condition binds *modified versions of the image* and would have applied to a
+key-picking mask derived from it — which is one reason the front end does not have one.
+It never applied to the emulator's source code. Delete the file and this entry together
+if the reference picture stops being wanted.
 
 ---
 
