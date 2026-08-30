@@ -53,3 +53,17 @@ symbol table for the debugger.
 Sections of the comp.sys.sinclair FAQ, maintained by Philip Kendall. See the
 [FAQ copyright notice](https://worldofspectrum.org/faq/copyright.htm) for its
 distribution terms.
+
+---
+
+## `../tests/vectors/z80/` (not redistributed)
+
+[SingleStepTests/z80](https://github.com/SingleStepTests/z80) — 1604 files of per-opcode
+test vectors, 1000 cases each, giving initial and final CPU state, memory, and the bus
+activity of every T-state. Generated from the Ares Z80 core by the JSMoo project.
+
+- **Licence:** MIT
+- **Fetched by:** [`tests/vectors/fetch.sh`](../tests/vectors/fetch.sh)
+
+About 1.3 GB expanded, so they are downloaded on demand rather than vendored, and
+`tests/z80_json.rs` skips if they are absent.

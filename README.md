@@ -7,11 +7,13 @@ sharing the same decoder for tracing and debugging, and a [Bevy](https://bevyeng
 front end with the display and a clickable keyboard built from a photograph of the real
 machine.
 
-**Status:** stage A complete — one decoder for all 1792 opcodes, checked against the
-generated spec tables, and a disassembler whose output agrees with the annotated ROM
-listing at all 991 labelled addresses straight-line decoding reaches — five of them
-modulo the assembler expressions the listing writes instead of values. Next is stage B:
-the interpreter and the machine-cycle timing primitives.
+**Status:** stages A and B complete. One decoder for all 1792 opcodes, checked against
+the generated spec tables; a disassembler that agrees with the annotated ROM listing at
+every labelled address straight-line decoding reaches; and an interpreter that spends
+every T-state through the machine-cycle primitives and passes all **1,604,000**
+[SingleStepTests](https://github.com/SingleStepTests/z80) per-opcode cases — registers,
+memory, MEMPTR, `Q`, ports, and the bus state of every individual T-state. Next is
+stage C: memory, ROM protection and the `Machine`, up to a headless `CLS`.
 
 ## Documentation
 
@@ -49,7 +51,7 @@ Primary reference material is mirrored under [doc/ref/](doc/ref/).
 
 ```sh
 cargo build
-cargo test                                   # decode round-trip + ROM listing agreement
+cargo test                                   # see "Tests" below
 cargo run --bin zxdis -- roms/48.rom         # disassemble the ROM
 cargo run --bin zxdis -- --start 11CB --end 1220 roms/48.rom
 ```
@@ -72,6 +74,31 @@ diffs it against the fixture, so the docs and the decoder cannot drift apart:
 ```sh
 python3 doc/tools/gen_z80.py rust-fixture > tests/fixtures/opcodes.rs
 ```
+
+## Tests
+
+| Test | What it proves |
+|---|---|
+| `tests/decode.rs` | All 1792 `(prefix, opcode)` pairs decode to the mnemonic, length and documented/undocumented status the spec tables give — and the fixture still matches the document it was generated from |
+| `tests/listing.rs` | `zxdis roms/48.rom` says the same thing as the annotated ROM disassembly at every labelled address it reaches |
+| `tests/timing.rs` | Every opcode's T-state total, on both arms of every conditional, matches the spec's timing column — which the interpreter never consults |
+| `tests/z80_json.rs` | The SingleStepTests per-opcode vectors: 1000 cases each for 1604 instruction sequences, checked down to the bus state of each T-state |
+
+The vectors are 1.3 GB expanded and are not in the repository:
+
+```sh
+tests/vectors/fetch.sh          # about 280 MB to download
+cargo test                      # about 15 seconds, most of it the 1.6 million vectors
+rm -rf tests/vectors/z80        # when you want the disk back
+```
+
+Iterating on one instruction is quicker than sweeping all 1604:
+
+```sh
+Z80_VECTORS_FILTER="dd cb" Z80_VECTORS_CASES=50 cargo test --test z80_json
+```
+
+Without them `tests/z80_json.rs` skips and everything else still runs.
 
 ## Licences and credits
 

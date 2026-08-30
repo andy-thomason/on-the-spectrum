@@ -5,3 +5,7 @@
 # download them locally. See doc/ref/README.md.
 doc/ref/z80cpu_um.pdf
 doc/ref/z80-documented.pdf
+
+# The SingleStepTests/z80 per-opcode vectors: 1604 files, 1.3 GB expanded. Fetched by
+# tests/vectors/fetch.sh, not redistributed here.
+/tests/vectors/z80

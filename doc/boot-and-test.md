@@ -57,6 +57,9 @@ src/
     zxheadless.rs   — headless runner: boot N frames, dump screen/trace
   main.rs           — the Bevy app (see ui.md)
 tests/
+  decode.rs         — every opcode against the generated spec tables
+  timing.rs         — every opcode's T-state total against the spec's timing column
+  listing.rs        — the disassembler against the annotated ROM listing
   z80_json.rs       — SingleStepTests per-opcode vectors
   zex.rs            — ZEXDOC / ZEXALL under a CP/M shim
   boot.rs           — ROM boot milestones

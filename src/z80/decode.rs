@@ -315,8 +315,11 @@ pub struct Decoded {
     /// Total length in bytes, prefixes included.
     pub len: u8,
     pub prefix: Prefix,
-    /// The `(IX+d)` displacement; meaningless unless an operand is [`Reg8::MemIdx`].
+    /// The `(IX+d)` displacement; meaningless unless [`Decoded::indexed`] is set.
     pub disp: i8,
+    /// An operand is `(IX+d)` or `(IY+d)`. The interpreter needs this to know when to
+    /// spend the internal T-states that compute the address.
+    pub indexed: bool,
     /// True for opcodes Zilog never published: `SLL`, the `IXH`/`IXL` halves, `IN (C)`,
     /// the `ED` aliases, the `DDCB` register-copy forms.
     pub undocumented: bool,
@@ -329,12 +332,37 @@ impl Decoded {
     }
 }
 
+/// What machine cycle a byte of an instruction arrives on.
+///
+/// The decoder is the first thing to know what role a byte plays, so it is the decoder
+/// that says so — otherwise the interpreter would have to re-derive it and the two could
+/// disagree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FetchKind {
+    /// An opcode fetch: M1, four T-states, and `R` increments.
+    Opcode,
+    /// An immediate or a displacement: a three T-state memory read.
+    Operand,
+    /// The final opcode byte of a `DDCB`/`FDCB` instruction, which is *not* an M1: a
+    /// three T-state read followed by two internal T-states.
+    DdcbOpcode,
+}
+
 /// A source of instruction bytes.
 ///
 /// The interpreter implements this over the bus, where each call is a machine cycle that
-/// costs T-states and bumps `R`; the disassembler implements it over a slice.
+/// costs T-states and, for an M1, bumps `R`; the disassembler implements it over a slice
+/// and ignores the machine cycles entirely.
 pub trait ByteSource {
-    fn next_byte(&mut self) -> u8;
+    fn read(&mut self, kind: FetchKind) -> u8;
+
+    /// Add one T-state to the opcode fetch just made — the `pc:5` of the c.s.s FAQ's
+    /// contention notation.
+    ///
+    /// Only instructions that go on to read an operand need this, because for the rest the
+    /// interpreter can spend the T-state itself once it knows what it is holding. In
+    /// practice that means `DJNZ` alone.
+    fn extend_opcode(&mut self) {}
 }
 
 /// Reads from a slice, returning `0xFF` past the end — what a real Spectrum's floating bus
@@ -356,7 +384,7 @@ impl<'a> Bytes<'a> {
 }
 
 impl ByteSource for Bytes<'_> {
-    fn next_byte(&mut self) -> u8 {
+    fn read(&mut self, _kind: FetchKind) -> u8 {
         let b = self.data.get(self.pos).copied().unwrap_or(0xFF);
         self.pos += 1;
         b
@@ -383,7 +411,7 @@ pub fn decode<S: ByteSource>(src: &mut S) -> Decoded {
     let mut idx: Option<Reg16> = None;
 
     loop {
-        let op = f.byte();
+        let op = f.opcode();
         return match op {
             // A DD or FD is a 4 T-state NONI that arms the index substitution for whatever
             // follows. A later prefix overrides an earlier one.
@@ -444,9 +472,24 @@ struct Fetcher<'a, S: ByteSource> {
 }
 
 impl<S: ByteSource> Fetcher<'_, S> {
-    fn byte(&mut self) -> u8 {
+    fn take(&mut self, kind: FetchKind) -> u8 {
         self.len += 1;
-        self.src.next_byte()
+        self.src.read(kind)
+    }
+
+    /// An opcode byte: M1.
+    fn opcode(&mut self) -> u8 {
+        self.take(FetchKind::Opcode)
+    }
+
+    /// An immediate or displacement byte.
+    fn byte(&mut self) -> u8 {
+        self.take(FetchKind::Operand)
+    }
+
+    /// One extra T-state on the opcode fetch just made.
+    fn extend(&mut self) {
+        self.src.extend_opcode();
     }
 
     fn word(&mut self) -> u16 {
@@ -475,6 +518,7 @@ impl<S: ByteSource> Fetcher<'_, S> {
             len: self.len,
             prefix,
             disp: self.disp,
+            indexed: self.have_disp,
             undocumented: self.undoc,
         }
     }
@@ -643,7 +687,12 @@ fn decode_base<S: ByteSource>(f: &mut Fetcher<S>, op: u8, idx: Option<Reg16>) ->
         (0, 0) => match y {
             0 => Op::Nop,
             1 => Op::Ex(ExOp::AfAf),
-            2 => Op::Djnz { disp: f.signed() },
+            2 => {
+                // `pc:5` — the extra T-state falls between the fetch and the displacement
+                // read, so only the decoder is in a position to place it.
+                f.extend();
+                Op::Djnz { disp: f.signed() }
+            }
             3 => Op::Jr {
                 cond: Cond::Always,
                 disp: f.signed(),
@@ -770,7 +819,7 @@ fn decode_base<S: ByteSource>(f: &mut Fetcher<S>, op: u8, idx: Option<Reg16>) ->
 }
 
 fn decode_cb<S: ByteSource>(f: &mut Fetcher<S>) -> Op {
-    let (x, y, z, ..) = xyzpq(f.byte());
+    let (x, y, z, ..) = xyzpq(f.opcode());
     let target = plain_r(z);
     match x {
         0 => {
@@ -797,7 +846,7 @@ fn decode_cb<S: ByteSource>(f: &mut Fetcher<S>) -> Op {
 }
 
 fn decode_ed<S: ByteSource>(f: &mut Fetcher<S>) -> Op {
-    let (x, y, z, p, q) = xyzpq(f.byte());
+    let (x, y, z, p, q) = xyzpq(f.opcode());
     if x == 0 || x == 3 {
         f.undoc = true;
         return Op::Invalid;
@@ -884,7 +933,7 @@ fn decode_ed<S: ByteSource>(f: &mut Fetcher<S>) -> Op {
 /// `DD`/`FD`, `CB`, **`d`**, opcode — the displacement comes *before* the opcode byte.
 fn decode_ddcb<S: ByteSource>(f: &mut Fetcher<S>, _ix: Reg16) -> Op {
     f.fetch_disp();
-    let (x, y, z, ..) = xyzpq(f.byte());
+    let (x, y, z, ..) = xyzpq(f.take(FetchKind::DdcbOpcode));
     let target = Reg8::MemIdx;
     // Every form that copies the result to a register is undocumented, as is `SLL`, as are
     // the seven `BIT` aliases.
