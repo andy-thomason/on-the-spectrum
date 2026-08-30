@@ -1,0 +1,55 @@
+# Asset credits and licences
+
+## `zx-spectrum-48k.jpg`
+
+Photograph of a Sinclair ZX Spectrum 48K.
+
+- **Author:** Bill Bertram (Wikimedia Commons user
+  [Pixel8](https://commons.wikimedia.org/wiki/User:Pixel8))
+- **Source:** [File:ZXSpectrum48k.jpg](https://commons.wikimedia.org/wiki/File:ZXSpectrum48k.jpg)
+- **Licence:** [CC BY-SA 2.5](https://creativecommons.org/licenses/by-sa/2.5/)
+
+**Obligations.** Attribution must be visible to users (About dialog and this file).
+Any *modified version of this image* — including a derived key-picking mask that
+incorporates the photo, or a rectified/warped copy — must be released under CC BY-SA 2.5
+or a compatible licence. This applies to the image and its derivatives, not to the
+emulator's source code.
+
+If the share-alike condition becomes inconvenient, the alternatives are
+[File:ZX Spectrum 48 K (ubt).JPG](https://commons.wikimedia.org/wiki/File:ZX_Spectrum_48_K_(ubt).JPG)
+by Tomasz Sienicki (CC BY 3.0, attribution only, no share-alike), or drawing an original
+faceplate as SVG.
+
+---
+
+## `../roms/48.rom`
+
+The Sinclair ZX Spectrum 48K ROM.
+
+- **Size:** 16384 bytes
+- **CRC32:** `ddee531f`
+- **SHA-1:** `5ea7c2b824672e914525d1d5c419d71b84a426a2`
+- **MD5:** `4c42a2f075212361c3117015b107ff68`
+
+Copyright Amstrad plc, who acquired the Sinclair computer rights in 1986. Amstrad have
+given permission for the Spectrum ROMs to be redistributed with emulators provided the
+copyright notice within the ROM image remains intact. They have **not** placed the ROMs
+in the public domain.
+
+---
+
+## `../doc/ref/Spectrum48-disassembly.asm`
+
+Annotated assembly listing of the 48K ROM, from
+[ZXSpectrumVault/rom-disassemblies](https://github.com/ZXSpectrumVault/rom-disassemblies),
+derived from the work of Dr Ian Logan and Dr Frank O'Hara (*The Complete Spectrum ROM
+Disassembly*) and Geoff Wearmouth. Used here as documentation and as the source of the
+symbol table for the debugger.
+
+---
+
+## `../doc/ref/48kreference.htm`, `../doc/ref/z80reference.htm`
+
+Sections of the comp.sys.sinclair FAQ, maintained by Philip Kendall. See the
+[FAQ copyright notice](https://worldofspectrum.org/faq/copyright.htm) for its
+distribution terms.

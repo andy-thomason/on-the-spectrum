@@ -1,0 +1,609 @@
+# The Z80 core, the disassembler, and booting the ROM
+
+This document covers the emulator core: a **traceable, loop-and-match interpreter**
+derived directly from the instruction spec in
+[z80-instruction-set.md](z80-instruction-set.md), a **disassembler** sharing the same
+decode, and the **test strategy**, whose headline goal is *boot the real 48K ROM to the
+copyright message and a blinking `K` cursor*.
+
+## 1. Design principles
+
+**One decoder, two consumers.** The interpreter and the disassembler must agree on
+what every byte sequence means, or tracing lies to you exactly when you need it most.
+So: decode once into a `Decoded` value; the interpreter executes it, the disassembler
+formats it.
+
+**Trace everything, cheaply.** Tracing is a compile-time feature plus a runtime flag.
+When off it must cost nothing (no branch in the hot loop beyond one predictable
+`if self.trace.is_some()`).
+
+**Reproducible.** Given a ROM and a scripted input sequence, a run must produce an
+identical trace every time. That is what makes divergence-bisection against a
+reference emulator possible.
+
+**Correctness before speed.** A naive match interpreter runs the Spectrum at many
+times real speed on any modern machine. Do not reach for threaded dispatch or JIT.
+
+**Time is spent, not tallied.** The CPU consumes T-states through machine-cycle
+primitives as it goes, rather than adding a per-instruction total at the end. This is
+the one structural decision that is expensive to change later, so it is made up front —
+see §5.
+
+## 2. Crate layout
+
+```
+src/
+  lib.rs
+  z80/
+    mod.rs          — Cpu, Registers, Flags
+    decode.rs       — byte stream → Decoded  (the single source of truth)
+    exec.rs         — the loop-and-match interpreter
+    cycles.rs       — the M-cycle primitives: every T-state is spent through these
+    alu.rs          — 8/16-bit arithmetic + flag computation
+    disasm.rs       — Decoded → text
+    trace.rs        — Tracer trait + implementations
+  spectrum/
+    mod.rs          — Machine: CPU + memory + ULA + keyboard, wired together
+    memory.rs       — 64K flat, ROM write protection, contention hooks
+    ula.rs          — port 0xFE, border, display fetch, frame timing
+    keyboard.rs     — 8x5 matrix
+    screen.rs       — display file → RGBA
+    tape.rs         — .tap / .tzx loading (later)
+    snapshot.rs     — .z80 / .sna loading (later, but very useful for testing)
+  bin/
+    zxdis.rs        — standalone disassembler over a binary
+    zxheadless.rs   — headless runner: boot N frames, dump screen/trace
+  main.rs           — the Bevy app (see ui.md)
+tests/
+  z80_json.rs       — SingleStepTests per-opcode vectors
+  zex.rs            — ZEXDOC / ZEXALL under a CP/M shim
+  boot.rs           — ROM boot milestones
+doc/
+roms/48.rom
+```
+
+`spectrum` depends on `z80`; `z80` depends on nothing but a `Bus` trait. Keeping the
+CPU ignorant of the Spectrum is what lets ZEXALL run against a trivial 64K-RAM bus.
+
+## 3. The bus
+
+```rust
+pub trait Bus {
+    fn read(&mut self, addr: u16) -> u8;
+    fn write(&mut self, addr: u16, val: u8);
+    fn in_port(&mut self, port: u16) -> u8;
+    fn out_port(&mut self, port: u16, val: u8);
+
+    /// Advance the machine clock by `cycles` T-states. Called by the CPU as each
+    /// machine cycle is consumed, *not* once per instruction.
+    fn tick(&mut self, cycles: u32);
+
+    /// The ULA's contention delay for an access to `addr` at the current T-state.
+    /// Returns extra T-states to burn *before* the access. Default: none.
+    fn contention(&mut self, _addr: u16) -> u32 { 0 }
+}
+```
+
+Threading `tick` through the CPU rather than returning a total at the end is what makes
+contention and a scanline or beam renderer possible without restructuring. See §5.
+
+## 4. Representing a decoded instruction
+
+The decode is data, not control flow. A shape along these lines:
+
+```rust
+pub struct Decoded {
+    pub op: Op,             // what to do
+    pub len: u8,            // total instruction length in bytes, 1..=4
+    pub prefix: Prefix,     // None | CB | ED | DD | FD | DDCB | FDCB
+}
+
+pub enum Reg8  { B, C, D, E, H, L, A, IXH, IXL, IYH, IYL, I, R, MemHL, MemIdx }
+pub enum Reg16 { BC, DE, HL, SP, AF, IX, IY, PC }
+
+pub enum Op {
+    Nop,
+    Load8   { dst: Reg8, src: Src8 },
+    Load16  { dst: Reg16, src: Src16 },
+    Alu     { op: AluOp, src: Src8 },
+    Inc8(Reg8), Dec8(Reg8),
+    Inc16(Reg16), Dec16(Reg16),
+    AddHl   { hl: Reg16, src: Reg16 },
+    AdcHl   { src: Reg16 }, SbcHl { src: Reg16 },
+    Rot     { op: RotOp, target: Reg8, copy_to: Option<Reg8> },  // copy_to = DDCB quirk
+    Bit     { bit: u8, target: Reg8 },
+    Res     { bit: u8, target: Reg8, copy_to: Option<Reg8> },
+    Set     { bit: u8, target: Reg8, copy_to: Option<Reg8> },
+    Jp      { cond: Cond, target: JumpTarget },
+    Jr      { cond: Cond, disp: i8 },
+    Djnz    { disp: i8 },
+    Call    { cond: Cond, addr: u16 },
+    Ret     { cond: Cond },
+    Retn, Reti,
+    Rst(u8),
+    Push(Reg16), Pop(Reg16),
+    Ex(ExOp), Exx,
+    In      { dst: Option<Reg8>, src: PortSrc },
+    Out     { src: Option<Reg8>, dst: PortSrc },
+    Block(BlockOp),
+    Rlca, Rrca, Rla, Rra, Daa, Cpl, Scf, Ccf, Neg,
+    Rld, Rrd,
+    Di, Ei, Im(u8), Halt,
+    Invalid,               // ED NONI+NOP
+}
+```
+
+Notes:
+
+- `Reg8::MemIdx` carries no displacement; keep the fetched `d` in a `Decoded` field or in
+  `Src8::Indexed { base: Reg16, d: i8 }`. Choose one and be consistent.
+- `copy_to` is exactly the `DDCB` "write the result to a register as well" quirk. Making
+  it an explicit `Option<Reg8>` means the undocumented forms fall out of the normal path
+  rather than being special-cased.
+- `Op::Invalid` must still consume 2 bytes and 8 T-states and inhibit the following
+  interrupt — it is not a panic.
+
+### `decode.rs`
+
+Mirror the octal decomposition from the spec:
+
+```rust
+pub fn decode<B: Bus>(bus: &mut B, pc: u16) -> Decoded {
+    let mut f = Fetcher::new(bus, pc);
+    let mut idx: Option<Reg16> = None;      // Some(IX) / Some(IY) after a DD/FD
+
+    loop {
+        let op = f.next();
+        match op {
+            0xDD => { idx = Some(Reg16::IX); continue; }   // a later DD/FD wins
+            0xFD => { idx = Some(Reg16::IY); continue; }
+            0xED => return decode_ed(&mut f),              // DD/FD before ED is discarded
+            0xCB if idx.is_some() => return decode_ddcb(&mut f, idx.unwrap()),
+            0xCB => return decode_cb(&mut f),
+            _ => return decode_base(&mut f, op, idx),
+        }
+    }
+}
+```
+
+The `continue` on repeated prefixes reproduces the real behaviour (each is a 4 T-state
+NONI, and the run cannot be interrupted) as long as the interpreter charges 4 T-states
+per prefix byte consumed and suppresses interrupt sampling until the run ends.
+
+`decode_base` is the octal table:
+
+```rust
+let (x, y, z, p, q) = (op >> 6, (op >> 3) & 7, op & 7, (op >> 4) & 3, (op >> 3) & 1);
+match (x, z) {
+    (0, 0) => match y { 0 => Op::Nop, 1 => Op::Ex(ExOp::AfAf), 2 => Op::Djnz { .. }, .. },
+    (0, 1) if q == 0 => Op::Load16 { dst: rp(p, idx), src: Src16::Imm(f.word()) },
+    (0, 1)           => Op::AddHl  { hl: hl(idx), src: rp(p, idx) },
+    ...
+    (1, _) if x == 1 && y == 6 && z == 6 => Op::Halt,
+    (1, _) => Op::Load8 { dst: r(y, idx), src: r_src(z, idx) },
+    (2, _) => Op::Alu { op: ALU[y], src: r_src(z, idx) },
+    ...
+}
+```
+
+Two rules that are easy to get wrong and must be handled inside `r()`/`r_src()`:
+
+1. If either operand resolves to `(HL)` under a `DD`/`FD` prefix, it becomes `(IX+d)`
+   and the **other** operand's `H`/`L` stay as `H`/`L`. `LD H,(IX+d)` exists;
+   `LD IXH,(IX+d)` does not.
+2. `EX DE,HL` is never affected by `DD`/`FD`.
+
+For `DDCB`, the displacement byte comes **before** the opcode byte.
+
+## 5. The T-state model
+
+**Do not implement timing as a per-instruction cycle table.** That approach cannot place
+contention, cannot say *when* within an instruction a screen byte was written, and
+quietly becomes wrong for every instruction whose accesses straddle a contention
+boundary. The generated T-state column in
+[z80-instruction-set.md](z80-instruction-set.md) is a **test oracle, not the
+implementation**.
+
+Instead, model the Z80's **machine cycles**. Every T-state the CPU consumes is consumed
+through one of five primitives, each of which charges the clock and, where applicable,
+asks the bus for a contention delay first. The instruction's total time is then an
+emergent property — and it comes out right by construction.
+
+### The primitives
+
+```rust
+impl Cpu {
+    /// M1: opcode fetch. 4 T-states, contended at PC, bumps R.
+    fn fetch_opcode<B: Bus>(&mut self, bus: &mut B) -> u8 {
+        let delay = bus.contention(self.pc);
+        bus.tick(delay);
+        let v = bus.read(self.pc);
+        bus.tick(4);
+        self.pc = self.pc.wrapping_add(1);
+        self.bump_r();
+        v
+    }
+
+    /// Operand or data read. 3 T-states, contended at `addr`.
+    fn read_byte<B: Bus>(&mut self, bus: &mut B, addr: u16) -> u8 {
+        let delay = bus.contention(addr);
+        bus.tick(delay);
+        let v = bus.read(addr);
+        bus.tick(3);
+        v
+    }
+
+    /// Data write. 3 T-states, contended at `addr`.
+    fn write_byte<B: Bus>(&mut self, bus: &mut B, addr: u16, val: u8) {
+        let delay = bus.contention(addr);
+        bus.tick(delay);
+        bus.write(addr, val);
+        bus.tick(3);
+    }
+
+    /// Internal CPU operation: `n` T-states with `addr` sitting on the address bus.
+    /// Each is contended *individually* — this is why `n × 1` and not `1 × n`.
+    fn internal<B: Bus>(&mut self, bus: &mut B, addr: u16, n: u32) {
+        for _ in 0..n {
+            let delay = bus.contention(addr);
+            bus.tick(delay);
+            bus.tick(1);
+        }
+    }
+
+    /// I/O access. 4 T-states with its own contention rules — see below.
+    fn io<B: Bus>(&mut self, bus: &mut B, port: u16, op: IoOp) -> u8 { /* see "I/O timing" below */ }
+}
+```
+
+Two subtleties in `internal`: each internal T-state is contended **separately**, because
+the ULA can stall the CPU at any one of them; and the address on the bus during an
+internal cycle is *not* always `PC`. For most internal operations it is `IR` (the `I`
+and `R` registers), and for read-modify-write instructions it is the operand address.
+
+> The Spectrum ROM sets `I = 0x3F` at `L11CB` precisely so that `IR` stays in ROM space
+> — it is commented "can't be in the range $40 - $7F as 'snow' appears on the screen".
+> A happy consequence: `IR`-addressed internal cycles are normally uncontended, which is
+> why the c.s.s FAQ's simplified notation can collapse them (it writes `ADD HL,dd` as
+> `pc:11` rather than spelling out seven internal cycles at `IR`). Address them at `IR`
+> anyway — it costs nothing and it is right even when a program sets `I` awkwardly.
+
+### Machine-cycle recipes
+
+Writing each instruction as its M-cycle sequence makes the timings self-evidently
+correct. The right-hand column is the c.s.s FAQ contention notation from
+[spectrum-memory-map.md](spectrum-memory-map.md) §Instruction contention table — note
+how exactly the two correspond. That correspondence is the design's main payoff.
+
+| Instruction | Machine cycles | Total | FAQ notation |
+|---|---|---|---|
+| `NOP`, `LD r,r'`, `alu A,r` | `M1(pc)` | 4 | `pc:4` |
+| `LD r,n` | `M1(pc)`, `MR(pc+1)` | 7 | `pc:4,pc+1:3` |
+| `LD A,(HL)` | `M1(pc)`, `MR(hl)` | 7 | `pc:4,hl:3` |
+| `LD (HL),A` | `M1(pc)`, `MW(hl)` | 7 | `pc:4,hl:3` |
+| `LD (HL),n` | `M1(pc)`, `MR(pc+1)`, `MW(hl)` | 10 | `pc:4,pc+1:3,hl:3` |
+| `INC BC` | `M1(pc)`, `IO(ir,2)` | 6 | `pc:6` |
+| `ADD HL,BC` | `M1(pc)`, `IO(ir,7)` | 11 | `pc:11` |
+| `ADC HL,BC` | `M1(pc)`, `M1(pc+1)`, `IO(ir,7)` | 15 | `pc:4,pc+1:11` |
+| `INC (HL)` | `M1(pc)`, `MR(hl)`, `IO(hl,1)`, `MW(hl)` | 11 | `pc:4,hl:3,hl:1,hl(write):3` |
+| `LD A,(nn)` | `M1(pc)`, `MR(pc+1)`, `MR(pc+2)`, `MR(nn)` | 13 | `pc:4,pc+1:3,pc+2:3,nn:3` |
+| `LD HL,(nn)` | `M1`, `MR(pc+1)`, `MR(pc+2)`, `MR(nn)`, `MR(nn+1)` | 16 | `…,nn:3,nn+1:3` |
+| `BIT b,(HL)` | `M1(pc)`, `M1(pc+1)`, `MR(hl)`, `IO(hl,1)` | 12 | `pc:4,pc+1:4,hl:3,hl:1` |
+| `SET b,(HL)` | `M1`, `M1`, `MR(hl)`, `IO(hl,1)`, `MW(hl)` | 15 | `…,hl:1,hl(write):3` |
+| `LD r,(IX+d)` | `M1(pc)`, `M1(pc+1)`, `MR(pc+2)`, `IO(pc+2,5)`, `MR(ix+d)` | 19 | `…,pc+2:1 x 5,ii+n:3` |
+| `LD (IX+d),n` | `M1`, `M1`, `MR(pc+2)`, `MR(pc+3)`, `IO(pc+3,2)`, `MW(ix+d)` | 19 | `…,pc+3:1 x 2,ii+n:3` |
+| `INC (IX+d)` | `M1`, `M1`, `MR(pc+2)`, `IO(pc+2,5)`, `MR(ix+d)`, `IO(ix+d,1)`, `MW(ix+d)` | 23 | as tabled |
+| `PUSH BC` | `M1(pc)`, `IO(ir,1)`, `MW(sp-1)`, `MW(sp-2)` | 11 | `pc:5,sp-1:3,sp-2:3` |
+| `POP BC` | `M1(pc)`, `MR(sp)`, `MR(sp+1)` | 10 | `pc:4,sp:3,sp+1:3` |
+| `RET` | `M1(pc)`, `MR(sp)`, `MR(sp+1)` | 10 | `pc:4,sp:3,sp+1:3` |
+| `RET cc` taken | `M1(pc)`, `IO(ir,1)`, `MR(sp)`, `MR(sp+1)` | 11 | `pc:5,[sp:3,sp+1:3]` |
+| `RET cc` not taken | `M1(pc)`, `IO(ir,1)` | 5 | `pc:5` |
+| `CALL nn` | `M1`, `MR(pc+1)`, `MR(pc+2)`, `IO(pc+2,1)`, `MW(sp-1)`, `MW(sp-2)` | 17 | as tabled |
+| `CALL cc,nn` not taken | `M1`, `MR(pc+1)`, `MR(pc+2)` | 10 | `pc:4,pc+1:3,pc+2:3` |
+| `RST n` | `M1(pc)`, `IO(ir,1)`, `MW(sp-1)`, `MW(sp-2)` | 11 | `pc:5,sp-1:3,sp-2:3` |
+| `JR d` | `M1(pc)`, `MR(pc+1)`, `IO(pc+1,5)` | 12 | `pc:4,pc+1:3,[pc+1:1 x 5]` |
+| `JR cc,d` not taken | `M1(pc)`, `MR(pc+1)` | 7 | `pc:4,pc+1:3` |
+| `DJNZ d` taken | `M1(pc)`, `IO(ir,1)`, `MR(pc+1)`, `IO(pc+1,5)` | 13 | `pc:5,pc+1:3,[pc+1:1 x 5]` |
+| `EX (SP),HL` | `M1`, `MR(sp)`, `MR(sp+1)`, `IO(sp+1,1)`, `MW(sp+1)`, `MW(sp)`, `IO(sp,2)` | 19 | as tabled |
+| `RLD` / `RRD` | `M1`, `M1`, `MR(hl)`, `IO(hl,4)`, `MW(hl)` | 18 | `…,hl:1 x 4,hl(write):3` |
+| `LD A,I` / `LD A,R` | `M1(pc)`, `M1(pc+1)` + 1 extra T | 9 | `pc:4,pc+1:5` |
+| `IN A,(n)` | `M1(pc)`, `MR(pc+1)`, `IO_port` | 11 | `pc:4,pc+1:3,IO` |
+| `IN r,(C)` | `M1(pc)`, `M1(pc+1)`, `IO_port` | 12 | `pc:4,pc+1:4,IO` |
+| `LDI` | `M1`, `M1`, `MR(hl)`, `MW(de)`, `IO(de,2)` | 16 | `…,de:1 x 2` |
+| `LDIR` repeating | …as `LDI`, then `IO(de,5)` | 21 | `[de:1 x 5]` |
+| `CPI` | `M1`, `M1`, `MR(hl)`, `IO(hl,5)` | 16 | `pc:4,pc+1:4,hl:3,hl:1 x 5` |
+| `INI` | `M1(pc)`, `M1(pc+1)`+1T, `IO_port`, `MW(hl)` | 16 | `pc:4,pc+1:5,IO,hl:3` |
+| `OUTI` | `M1(pc)`, `M1(pc+1)`+1T, `MR(hl)`, `IO_port` | 16 | `pc:4,pc+1:5,hl:3,IO` |
+| `HALT` | `M1(pc)` with `PC` not advanced | 4 per spin | `pc:4` |
+
+Reading order matters as much as cycle count: `INC (HL)` **reads, computes, then writes**,
+and the write is the last M-cycle. That is what determines when the ULA sees a change to
+the display file.
+
+### I/O timing
+
+`IN`/`OUT` cost 4 T-states of port access, but the contention pattern depends on the port
+address, not on a memory address — the rules are in
+[spectrum-memory-map.md](spectrum-memory-map.md) §Contended I/O:
+
+```rust
+fn io_contention<B: Bus>(bus: &mut B, port: u16) {
+    let high_contended = (0x40..=0x7f).contains(&(port >> 8));
+    let ula = port & 1 == 0;                     // A0 low → the ULA must answer
+    match (high_contended, ula) {
+        (false, false) => { bus.tick(4); }                              // N:4
+        (false, true)  => { bus.tick(1); contend(bus, port); bus.tick(3); }  // N:1, C:3
+        (true,  false) => { for _ in 0..4 { contend(bus, port); bus.tick(1); } } // C:1 ×4
+        (true,  true)  => { contend(bus, port); bus.tick(1);
+                            contend(bus, port); bus.tick(3); }          // C:1, C:3
+    }
+}
+```
+
+The actual `in_port`/`out_port` call happens **after** the first T-state of the sequence,
+which is what makes border-change timing land where the FAQ says it does.
+
+### Where the counter lives
+
+The CPU keeps a monotonic `u64` total (needed by the SingleStepTests vectors and by
+traces). The **machine** keeps the position within the frame, because that is what
+contention and the interrupt depend on:
+
+```rust
+impl Bus for Machine {
+    fn tick(&mut self, cycles: u32) {
+        self.frame_t += cycles;
+        self.ula.advance(self.frame_t);       // scanline / beam renderer hooks in here
+    }
+    fn contention(&mut self, addr: u16) -> u32 {
+        if !self.contention_enabled { return 0; }
+        if !(0x4000..0x8000).contains(&addr) { return 0; }
+        contention_delay(self.frame_t)        // the table in spectrum-video.md
+    }
+}
+```
+
+`contention_enabled` starts `false`. Everything above is still correct with it off — the
+accounting is identical, the delays are just zero. **Contention is a phase-H switch, not
+a phase-H rewrite**, which is the whole point of building the model this way from the
+start.
+
+### The frame loop and the interrupt
+
+```rust
+const FRAME_T: u32 = 69888;
+const INT_ACTIVE_T: u32 = 32;     // /INT is held low for 32 T-states
+
+impl Machine {
+    pub fn run_frame(&mut self) {
+        let target = self.frame_t + FRAME_T;   // don't reset to 0; carry the overshoot
+        while self.frame_t < target {
+            self.cpu.step(&mut self.bus);
+        }
+        self.frame_t -= FRAME_T;
+        self.frames += 1;
+        self.int_pending = true;
+    }
+}
+```
+
+An instruction almost never lands exactly on the frame boundary, so **carry the
+overshoot** rather than resetting to zero — otherwise timing drifts by a few T-states
+every frame and long-running programs desynchronise.
+
+`/INT` is level-triggered and sampled at the end of each instruction, so:
+
+- If `frame_t` is within the first 32 T of a frame and `IFF1` is set, take the interrupt.
+- If the CPU was executing a long instruction and the 32-T window has passed, the
+  interrupt is **missed** — that is real behaviour, not a bug to paper over.
+- A run of `DD`/`FD` prefixes is not interruptible, and neither is the instruction
+  immediately after `EI`.
+
+Interrupt acknowledge costs, in machine cycles: `M1` extended to **7 T** (acknowledge),
+then `MW(sp-1)`, `MW(sp-2)` → **13 T** for IM 1. IM 2 adds `MR(vec)`, `MR(vec+1)` → 19 T.
+`R` increments by 1 on acknowledge.
+
+## 6. The interpreter
+
+```rust
+impl Cpu {
+    pub fn step<B: Bus>(&mut self, bus: &mut B) -> u64 {
+        let start = self.total_t;
+
+        if self.try_take_interrupt(bus) { return self.total_t - start; }
+
+        let pc = self.pc;
+        // decode() consumes the fetch cycles through the primitives in §5,
+        // so PC and R are already advanced when it returns.
+        let dec = self.decode(bus);
+
+        if let Some(tr) = &mut self.tracer { tr.before(pc, &dec, self); }
+
+        self.execute(bus, &dec);          // charges its own remaining M-cycles
+
+        if let Some(tr) = &mut self.tracer { tr.after(self, self.total_t - start); }
+        self.total_t - start
+    }
+}
+```
+
+Note what changed from a naive design: `decode` is not a pure function of a byte slice —
+it *runs* the fetch cycles, because those cycles are contended at `PC` and must be
+charged in order. Keep a pure `decode_bytes(&[u8]) -> Decoded` alongside it for the
+disassembler and for tests, and have the executing path share its tables.
+
+`execute` is one big `match dec.op { .. }`. Keep it flat — a match on a C-like enum
+compiles to a jump table, and readability matters more than the last 10% here.
+
+### Getting the details right
+
+These are the ones that bite. Each has a test in §8.
+
+- **`R` register.** Only the low 7 bits increment; bit 7 is preserved. `DD CB` adds 2,
+  not 3. Interrupt acknowledge adds 1.
+- **Flags 5 and 3.** Not optional. See the undocumented-flags table in the spec.
+- **MEMPTR.** Implement from the start.
+- **`EI` shadow.** An interrupt cannot be taken until after the instruction *following*
+  `EI`. Model with a `pending_ei: bool` cleared at the top of the next `step`.
+- **`HALT`.** Do not spin the host. Either loop executing a 4 T-state internal NOP with
+  `PC` frozen, or jump the clock to the next interrupt. `PC` on wake is the address
+  after the `HALT`.
+- **Interrupted block instructions.** `LDIR` etc. rewind `PC` by 2 between iterations, so
+  an interrupt taken mid-run resumes correctly.
+- **`LD A,I` / `LD A,R`** put `IFF2` in P/V — and if the instruction is interrupted, P/V
+  reads as reset.
+- **ROM writes are discarded**, not faults.
+
+## 7. The disassembler
+
+```rust
+pub fn disassemble(dec: &Decoded, pc: u16) -> String;
+```
+
+Plus a helper that walks a byte range for `zxdis`. Requirements:
+
+- Renders undocumented opcodes distinctly: `SLL B`, `LD B,RES 0,(IX+d)`, `IN (C)`,
+  `OUT (C),0`, `*NEG`, `*RETN`.
+- Renders `JR`/`DJNZ` as absolute targets (`JR NZ,$1234`) with the raw displacement in
+  a comment, since that is what a human tracing a ROM wants.
+- Optional symbol table so ROM addresses print as names. **Harvest it from the annotated
+  disassembly**: [ref/Spectrum48-disassembly.asm](ref/Spectrum48-disassembly.asm) has
+  ~2000 `;; NAME` / `Lxxxx:` pairs. A small build script turns those into a
+  `&[(u16, &str)]`, and suddenly a trace reads `CALL $0D6B ; CLS` instead of
+  `CALL $0D6B`. This is the single highest-value debugging investment in the project.
+
+Trace line format — fixed columns, greppable, diffable:
+
+```
+ PC   bytes         mnemonic              AF   BC   DE   HL   IX   IY   SP  IR  Tstate
+11CB  47            LD B,A                0000 0000 0000 0000 0000 0000 0000 0000  0000000024
+11CC  CD 63 12      CALL $1263 ; RAM-CHK  0000 0000 0000 0000 0000 0000 0000 0001  0000000028
+```
+
+Include the shadow registers and `IFF1/IM` on a second line behind a verbosity flag.
+
+### Tracer trait
+
+```rust
+pub trait Tracer {
+    fn before(&mut self, pc: u16, dec: &Decoded, cpu: &Cpu);
+    fn after(&mut self, cpu: &Cpu, cycles: u32);
+}
+```
+
+Implementations worth having:
+
+| Tracer | Use |
+|---|---|
+| `TextTracer` | Write the format above to a writer |
+| `RingTracer` | Keep the last N thousand instructions in memory; dump on a trigger. **The one you will use most** — a crash's last 10k instructions is what you need |
+| `CountTracer` | Per-opcode execution counts; tells you which instruction you have not covered yet |
+| `WatchTracer` | Break on PC hit, memory write to an address range, or port access |
+
+Drive them from the UI with breakpoints, single-step and "run to address" — see
+[ui.md](ui.md).
+
+## 8. Test strategy
+
+Five layers, in the order you should build them.
+
+### 8.1 Decode round-trip
+
+For all 256 unprefixed, 256 `CB`, 256 `ED`, 256 `DD`, 256 `FD`, 256 `DDCB` and 256
+`FDCB` opcodes: decode, then check `len` and the mnemonic against the generated tables
+in [z80-instruction-set.md](z80-instruction-set.md). `doc/tools/gen_z80.py` can emit a
+Rust `&[(&str, u8, &str)]` fixture, so this test is a diff against the spec document
+itself. Any drift between docs and code is a test failure.
+
+### 8.2 Per-opcode vectors — the fastest path to a correct CPU
+
+[SingleStepTests/z80](https://github.com/SingleStepTests/z80) provides ~1000 JSON test
+cases *per opcode* — initial registers and RAM, final registers and RAM, and the exact
+cycle-by-cycle bus activity. Running these gets you from "mostly works" to "correct,
+including flags 5/3 and MEMPTR" faster than any amount of staring at code.
+
+```rust
+#[test] fn single_step_tests() { /* for each opcode file: load, run 1 step, compare */ }
+```
+
+Compare registers *including* `F` bits 5 and 3, `WZ`, `Q`, and the T-state total. Expect
+this to fail on hundreds of cases at first; each failure is precise and local.
+
+### 8.3 ZEXDOC / ZEXALL
+
+The classic CP/M exercisers. `zexdoc.com` checks documented flag behaviour, `zexall.com`
+checks the undocumented bits too. They need a ~30-line CP/M BDOS shim: load at `0x0100`,
+put `RET` at `0x0005` intercepting BDOS calls 2 (print char) and 9 (print `$`-terminated
+string), and start with `SP` sane.
+
+They are slow (billions of T-states) so gate them behind `#[ignore]` or a
+`--features slow-tests` flag. Every test must print `OK`; a `ERROR **** crc expected …`
+line names the exact instruction group that is wrong.
+
+### 8.4 ROM boot milestones — the headline test
+
+Run the real ROM headless and assert on observable state at each milestone. Boot is
+about 3.4 million T-states (a few dozen frames), which is milliseconds.
+
+| # | Milestone | How to detect |
+|---|---|---|
+| 1 | Reset vector executes | After 3 steps: `PC == 0x11CB`, `DE == 0xFFFF`, `A == 0`, IFF1 clear |
+| 2 | RAM test completes | `PC` reaches `0x11EF` (RAM-DONE) |
+| 3 | `RAMTOP` set | After `0x1219`, `peek16(0x5CB2)` is sane (≈`0xFF57` on 48K) and `peek16(0x5CB4) == 0xFFFF` |
+| 4 | System variables initialised | `ATTR_P` (`0x5C8D`) == `0x38`, `ATTR_T` (`0x5C8F`) == `0x38`, `BORDCR` (`0x5C48`) == `0x38`, `REPDEL` (`0x5C09`) == `0x23`, `REPPER` (`0x5C0A`) == `0x05` |
+| 5 | Streams table copied | 14 bytes at `0x5C10` match the ROM table at `L15C6` |
+| 6 | `CLS` ran | `0x4000..0x5800` all zero; `0x5800..0x5AFF` all `0x38` |
+| 7 | Copyright message printed | The bottom two character rows of the display file render to `© 1982 Sinclair Research Ltd` |
+| 8 | Main loop reached | `PC` hits `0x12A9` (MAIN-1) |
+| 9 | Interrupt handler running | After N frames, `FRAMES` (`0x5C78`, 3 bytes LE) == N |
+| 10 | Cursor visible and flashing | Character `K` in inverse video at the bottom left, toggling every 16 frames |
+| 11 | Keyboard works | Inject `P`, `R`, `I`, `N`, `T`… as matrix states held for 2 frames each; assert the typed line appears in the edit area and `E_LINE` grows |
+| 12 | BASIC executes | Type `PRINT 2+2` + ENTER; assert `2` appears… then assert `4` appears at the top of the screen |
+
+Milestone 7 is the classic "it lives" moment; 12 is the real proof the CPU, ULA,
+keyboard and timing all work together.
+
+For 7, 10 and 12 the cleanest assertion is **render the display file to text**: for each
+of the 24×32 cells, compare the 8 bytes against the ROM character set at `0x3D00` and
+recover a character code. A 40-line `screen_to_text()` helper turns fuzzy visual checks
+into exact string assertions, and it is invaluable for every later test too.
+
+### 8.5 Differential tracing
+
+When a milestone fails and you cannot see why: run the same ROM under a known-good
+emulator with tracing on (Fuse has `--debugger-command`; `z80ex`/`libspectrum` tools
+also work), dump both traces, and `diff`. The first differing line is the bug. This is
+why the trace format must be deterministic and column-stable.
+
+Bisect with the `RingTracer`: set a watchpoint on the first symptom (a bad value written
+to a system variable, say), dump the preceding 10k instructions, and read backwards.
+
+### 8.6 Later: timing tests
+
+Once contention is implemented, run the standard test ROMs:
+
+- Patrik Rak's **Z80 Test Suite** (`z80full`, `z80memptr`, `z80ccf`) — runs *on* the
+  Spectrum, so it tests the CPU, the ROM and your display together.
+- **Floating bus** and **contention** test programs from the World of Spectrum
+  utilities section.
+
+## 9. Milestone plan
+
+| Stage | Deliverable | Done when |
+|---|---|---|
+| **A** | `decode.rs` + `disasm.rs` | `zxdis roms/48.rom` produces output that matches the annotated listing over a hand-checked sample; §8.1 passes |
+| **B** | `exec.rs` + the §5 M-cycle primitives; `contention()` returns 0 | §8.2 passes for all opcodes **including the per-cycle bus activity**, not just the T-state totals |
+| **C** | Memory + ROM protection + `Machine` | ROM boot reaches milestone 6 |
+| **D** | ULA: port `0xFE`, 50 Hz interrupt, frame timing | Milestones 7–9 |
+| **E** | Keyboard matrix | Milestones 10–12. **This is "the emulator works"** |
+| **F** | Screen → RGBA + Bevy shell | See [ui.md](ui.md) |
+| **G** | Beeper, tape loading, snapshots | Load a `.z80` snapshot of a real game and play it |
+| **H** | Contention, floating bus, beam renderer | Rak's test suite passes |
+
+Stages A–E are the emulator. Everything after is polish, and each stage has a
+demonstrable result — resist the urge to build F before E works headlessly.
+
+Phase H is small *provided* phase B builds the M-cycle model. Turning contention on is
+then implementing one function (`contention_delay`, already written in
+[spectrum-video.md](spectrum-video.md)) and flipping `contention_enabled`. If phase B
+instead charges per-instruction totals, phase H is a rewrite of every instruction.

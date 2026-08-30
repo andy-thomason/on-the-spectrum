@@ -1,0 +1,7 @@
+/target
+
+# Third-party reference PDFs are not redistributed here — they are copyright their
+# authors and are not formally licensed for redistribution. Run doc/ref/fetch.sh to
+# download them locally. See doc/ref/README.md.
+doc/ref/z80cpu_um.pdf
+doc/ref/z80-documented.pdf
