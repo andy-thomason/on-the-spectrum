@@ -162,8 +162,13 @@ struct KeyboardState {
 
 Merge the sources with OR into `machine.bus.keyboard` before each `run_frame`. Four rules:
 
-- Map **physical key positions** (`KeyCode`), not text input, so the layout is predictable
-  whatever the host locale is set to.
+- Map **letters and digits by physical position** (`KeyCode`), so the layout is
+  predictable whatever the host locale is set to — and map **punctuation by the character
+  the host actually produced**, because that is the only thing the two keyboards agree on.
+  `+` is Shift and `=` here and SYM SHIFT and `K` there; they have no key in common, and a
+  purely positional mapping sends CAPS SHIFT, SYM SHIFT and `L` at once, which is extended
+  mode rather than a plus sign. When a symbol supplies its own shift, drop the host's: it
+  was spent making the character.
 - Synthesised chords — Backspace → CAPS SHIFT + `0`, arrows → CAPS SHIFT + `5`–`8`,
   Escape → CAPS SHIFT + SPACE — must be held for **at least two emulated frames**. The ROM
   scans the matrix from its 50 Hz interrupt, so a chord that appears and vanishes inside

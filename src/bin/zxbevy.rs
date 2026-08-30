@@ -11,6 +11,9 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::ImagePlugin;
+use bevy::input::ButtonState;
+use bevy::input::keyboard::KeyboardInput;
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
@@ -36,6 +39,14 @@ struct Emulator {
     /// 1.0 is real time; 0.0 is paused.
     speed: f64,
 }
+
+/// What each held host key produced as text.
+///
+/// A symbol has to be looked up by the character the host layout actually made, not by
+/// where the key sits: `+` is Shift and `=` on this keyboard and SYM SHIFT and `K` on a
+/// Spectrum, and the two have no key in common.
+#[derive(Resource, Default)]
+struct HostText(HashMap<KeyCode, char>);
 
 #[derive(Resource)]
 struct Screen {
@@ -73,6 +84,7 @@ fn main() -> AppExit {
                 .set(ImagePlugin::default_nearest()),
         )
         .insert_resource(ClearColor(Color::BLACK))
+        .init_resource::<HostText>()
         .insert_resource(Emulator {
             machine: Machine::new(&rom),
             accumulator: 0.0,
@@ -107,13 +119,83 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
 /// Host keys in, eight matrix bytes out. Nothing else: the ROM does its own debouncing,
 /// auto-repeat and decoding on the 50 Hz interrupt, which is why the single `P` key gives
 /// the whole `PRINT` keyword at a fresh prompt.
-fn keyboard(mut emu: ResMut<Emulator>, keys: Res<ButtonInput<KeyCode>>) {
-    emu.machine.bus.keyboard.release_all();
-    for code in keys.get_pressed() {
-        if let Some(chord) = chord_of(*code) {
-            emu.machine.bus.keyboard.press(chord);
+///
+/// Letters and digits are taken by **position**, so the layout is predictable whatever the
+/// host locale is; punctuation is taken by the **character produced**, because that is the
+/// only thing the two keyboards agree on.
+fn keyboard(
+    mut emu: ResMut<Emulator>,
+    mut host: ResMut<HostText>,
+    mut input: MessageReader<KeyboardInput>,
+    keys: Res<ButtonInput<KeyCode>>,
+) {
+    for event in input.read() {
+        match event.state {
+            ButtonState::Pressed => {
+                if let Some(c) = event.text.as_ref().and_then(|t| t.chars().next()) {
+                    host.0.insert(event.key_code, c);
+                }
+            }
+            ButtonState::Released => {
+                host.0.remove(&event.key_code);
+            }
         }
     }
+
+    let held: Vec<(KeyCode, Option<char>)> = keys
+        .get_pressed()
+        .map(|code| (*code, host.0.get(code).copied()))
+        .collect();
+
+    let keyboard = &mut emu.machine.bus.keyboard;
+    keyboard.release_all();
+    for chord in resolve(&held) {
+        keyboard.press(chord);
+    }
+}
+
+/// The chords a set of held host keys makes, given what each of them typed.
+///
+/// Pure, so the awkward cases can be tested without a window in the way.
+fn resolve(held: &[(KeyCode, Option<char>)]) -> Vec<Chord> {
+    let mut chords: Vec<(KeyCode, Chord, bool)> = Vec::new();
+    let mut symbol_held = false;
+
+    for &(code, text) in held {
+        let as_symbol = text
+            .filter(|c| !c.is_ascii_alphanumeric() && *c != ' ')
+            .and_then(Chord::for_char);
+        if let Some(chord) = as_symbol {
+            chords.push((code, chord, true));
+            symbol_held = true;
+        } else if let Some(chord) = chord_of(code) {
+            chords.push((code, chord, false));
+        } else if let Some(chord) = text.and_then(Chord::for_char) {
+            // The numeric keypad, and anything else with no position of its own.
+            chords.push((code, chord, false));
+        }
+    }
+
+    chords
+        .into_iter()
+        .filter(|&(code, _, from_symbol)| {
+            // The host shift that made `+` was spent making it. Pressing CAPS SHIFT as
+            // well would put the machine into extended mode instead.
+            !(symbol_held && !from_symbol && is_host_shift(code))
+        })
+        .map(|(_, chord, _)| chord)
+        .collect()
+}
+
+fn is_host_shift(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::ShiftLeft
+            | KeyCode::ShiftRight
+            | KeyCode::ControlLeft
+            | KeyCode::ControlRight
+            | KeyCode::AltLeft
+    )
 }
 
 fn run_emulation(mut emu: ResMut<Emulator>, time: Res<Time>) {
@@ -238,15 +320,123 @@ fn chord_of(code: KeyCode) -> Option<Chord> {
         ArrowUp => return Some(Chord::caps(Key::named("7")?)),
         ArrowRight => return Some(Chord::caps(Key::named("8")?)),
         Escape => return Some(Chord::caps(Key::SPACE)),
-        Comma => return Some(Chord::symbol(Key::named("N")?)),
-        Period => return Some(Chord::symbol(Key::named("M")?)),
-        Semicolon => return Some(Chord::symbol(Key::named("O")?)),
-        Quote => return Some(Chord::symbol(Key::named("P")?)),
-        Minus => return Some(Chord::symbol(Key::named("J")?)),
-        Equal => return Some(Chord::symbol(Key::named("L")?)),
-        Slash => return Some(Chord::symbol(Key::named("V")?)),
         CapsLock => return Some(Chord::caps(Key::named("2")?)),
         _ => return None,
     };
     Some(Chord::plain(Key::named(name)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use on_the_spectrum::spectrum::Machine;
+
+    fn chords(held: &[(KeyCode, Option<char>)]) -> Vec<Chord> {
+        resolve(held)
+    }
+
+    #[test]
+    fn a_symbol_uses_its_own_shift_and_not_the_host_s() {
+        // `+` is Shift and `=` here, and SYM SHIFT and `K` there.
+        let plus = chords(&[(KeyCode::ShiftLeft, None), (KeyCode::Equal, Some('+'))]);
+        assert_eq!(plus, vec![Chord::symbol(Key::named("K").unwrap())]);
+
+        // ...and the keypad's `+` needs no shift at all to say the same thing.
+        let keypad = chords(&[(KeyCode::NumpadAdd, Some('+'))]);
+        assert_eq!(keypad, vec![Chord::symbol(Key::named("K").unwrap())]);
+    }
+
+    #[test]
+    fn a_shifted_letter_is_still_caps_shift() {
+        let a = chords(&[(KeyCode::ShiftLeft, None), (KeyCode::KeyA, Some('A'))]);
+        assert_eq!(
+            a,
+            vec![
+                Chord::plain(Key::CAPS_SHIFT),
+                Chord::plain(Key::named("A").unwrap())
+            ]
+        );
+    }
+
+    #[test]
+    fn the_symbol_shift_key_still_works_by_position() {
+        // Ctrl and K produces no text, so it falls through to the positions.
+        let plus = chords(&[(KeyCode::ControlLeft, None), (KeyCode::KeyK, None)]);
+        assert_eq!(
+            plus,
+            vec![
+                Chord::plain(Key::SYM_SHIFT),
+                Chord::plain(Key::named("K").unwrap())
+            ]
+        );
+    }
+
+    /// One host keypress: the keys held down, and the character it should reach the
+    /// Spectrum's edit line as.
+    type Case = (&'static [(KeyCode, Option<char>)], u8);
+
+    /// The whole path, on a real machine: hold what the host would hold, and see the
+    /// character land in the edit line.
+    #[test]
+    fn the_punctuation_a_host_keyboard_can_reach_all_arrives() {
+        let rom = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/roms/48.rom")).unwrap();
+        let mut machine = Machine::new(&rom);
+        assert!(machine.run_until_pc(0x12A9, 12_000_000), "never booted");
+
+        // (host keys held, what the Spectrum should end up with)
+        let cases: &[Case] = &[
+            (
+                &[(KeyCode::ShiftLeft, None), (KeyCode::Equal, Some('+'))],
+                b'+',
+            ),
+            (&[(KeyCode::Minus, Some('-'))], b'-'),
+            (
+                &[(KeyCode::ShiftLeft, None), (KeyCode::Digit8, Some('*'))],
+                b'*',
+            ),
+            (&[(KeyCode::Slash, Some('/'))], b'/'),
+            (
+                &[(KeyCode::ShiftLeft, None), (KeyCode::Digit9, Some('('))],
+                b'(',
+            ),
+            (&[(KeyCode::Quote, Some('\''))], b'\''),
+            (
+                &[(KeyCode::ShiftLeft, None), (KeyCode::Quote, Some('"'))],
+                b'"',
+            ),
+            (&[(KeyCode::Comma, Some(','))], b','),
+            (&[(KeyCode::Period, Some('.'))], b'.'),
+            (&[(KeyCode::Semicolon, Some(';'))], b';'),
+            (
+                &[(KeyCode::ShiftLeft, None), (KeyCode::Semicolon, Some(':'))],
+                b':',
+            ),
+            (&[(KeyCode::Equal, Some('='))], b'='),
+        ];
+
+        for &(held, expected) in cases {
+            let before = machine.edit_line().len();
+            for chord in resolve(held) {
+                machine.bus.keyboard.press(chord);
+            }
+            machine.run_frames(3);
+            machine.bus.keyboard.release_all();
+            machine.run_frames(3);
+
+            let line = machine.edit_line();
+            assert_eq!(
+                line.len(),
+                before + 1,
+                "{expected:?} typed nothing; the line reads {:?}",
+                String::from_utf8_lossy(&line)
+            );
+            assert_eq!(
+                *line.last().unwrap(),
+                expected,
+                "expected {:?}, got {:?}",
+                expected as char,
+                *line.last().unwrap() as char
+            );
+        }
+    }
 }

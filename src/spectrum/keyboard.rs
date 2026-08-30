@@ -112,6 +112,7 @@ impl Chord {
             ':' => symbol("Z"),
             '£' => symbol("X"),
             '?' => symbol("C"),
+            '^' => symbol("H"),
             '/' => symbol("V"),
             '*' => symbol("B"),
             ',' => symbol("N"),
