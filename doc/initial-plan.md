@@ -68,8 +68,8 @@ keyboard.
 Three rules hold this together:
 
 1. **`z80` knows nothing about the Spectrum.** It talks to a `Bus` trait. This is what
-   lets the ZEXALL exercisers run against a trivial 64K-RAM bus, and it keeps the CPU
-   testable in isolation.
+   lets the SingleStepTests vectors run it against a trivial 64K-RAM bus, and it keeps
+   the CPU testable in isolation.
 2. **One decoder feeds both the interpreter and the disassembler.** If they diverge,
    traces lie exactly when you need them. `decode()` returns data; `exec` executes it,
    `disasm` formats it.

@@ -61,14 +61,15 @@ tests/
   timing.rs         — every opcode's T-state total against the spec's timing column
   listing.rs        — the disassembler against the annotated ROM listing
   z80_json.rs       — SingleStepTests per-opcode vectors
-  zex.rs            — ZEXDOC / ZEXALL under a CP/M shim
+  render.rs         — the frame renderer, against a booted screen
   boot.rs           — ROM boot milestones
 doc/
 roms/48.rom
 ```
 
-`spectrum` depends on `z80`; `z80` depends on nothing but a `Bus` trait. Keeping the
-CPU ignorant of the Spectrum is what lets ZEXALL run against a trivial 64K-RAM bus.
+`spectrum` depends on `z80`; `z80` depends on nothing but a `Bus` trait. Keeping the CPU
+ignorant of the Spectrum is what lets the §8.2 vectors run it against a trivial 64K-RAM
+bus, with no ULA, no ROM and no frame in the way.
 
 ## 3. The bus
 
@@ -510,7 +511,7 @@ Drive them from the UI with breakpoints, single-step and "run to address" — se
 
 ## 8. Test strategy
 
-Five layers, in the order you should build them.
+Four layers, in the order you should build them, and one that was dropped.
 
 ### 8.1 Decode round-trip
 
@@ -534,16 +535,22 @@ including flags 5/3 and MEMPTR" faster than any amount of staring at code.
 Compare registers *including* `F` bits 5 and 3, `WZ`, `Q`, and the T-state total. Expect
 this to fail on hundreds of cases at first; each failure is precise and local.
 
-### 8.3 ZEXDOC / ZEXALL
+### 8.3 ZEXDOC / ZEXALL — dropped
 
-The classic CP/M exercisers. `zexdoc.com` checks documented flag behaviour, `zexall.com`
-checks the undocumented bits too. They need a ~30-line CP/M BDOS shim: load at `0x0100`,
-put `RET` at `0x0005` intercepting BDOS calls 2 (print char) and 9 (print `$`-terminated
-string), and start with `SP` sane.
+**Decision: not doing these.** The classic CP/M exercisers check flag behaviour by
+CRC-ing the results of long instruction sequences, and were the best CPU test available
+before per-opcode vectors existed. §8.2 now does the same job and more: every opcode
+against a thousand randomised cases, checking flags 5 and 3, MEMPTR, `Q`, `P` and the
+bus state of every T-state, with `Q` and `P` supplied as *inputs* so behaviour that
+carries between instructions is covered too. A passing ZEXALL after that says nothing
+new.
 
-They are slow (billions of T-states) so gate them behind `#[ignore]` or a
-`--features slow-tests` flag. Every test must print `OK`; a `ERROR **** crc expected …`
-line names the exact instruction group that is wrong.
+Against that they cost a CP/M BDOS shim and billions of T-states per run, and a failure
+names an instruction group rather than an opcode and a case.
+
+What is worth having instead is already in §8.6: Patrik Rak's suite runs **on the
+Spectrum**, so it exercises the CPU, the ROM, the ULA and the display together — coverage
+neither §8.2 nor ZEXALL provides, and it needs no shim at all.
 
 ### 8.4 ROM boot milestones — the headline test
 

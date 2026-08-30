@@ -95,8 +95,8 @@ An internal 16-bit register whose high byte leaks into flags **5** and **3** on
 | `OUT (n),A` | low byte = `n + 1`, high byte = `A` |
 | block ops `LDI`… `CPI`… `INI`… `OUTI`… | see Young §4.3 |
 
-Implement MEMPTR from day one; retro-fitting it is painful and the ZEXALL-style
-tests check it.
+Implement MEMPTR from day one; retro-fitting it is painful and the per-opcode vectors
+of [boot-and-test.md](boot-and-test.md) §8.2 check it directly, as `wz`.
 
 ### The `R` register
 
