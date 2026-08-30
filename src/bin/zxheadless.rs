@@ -4,6 +4,7 @@
 //! zxheadless                          # 100 frames, then print the screen
 //! zxheadless --frames 2 --state       # the first two frames, with the CPU state
 //! zxheadless --until 12A9             # run until PC reaches MAIN-1
+//! zxheadless --type 'P2+2\n'           # boot, then type PRINT 2+2 and ENTER
 //! ```
 //!
 //! Everything the Bevy front end will do rests on this: if the machine does not boot here,
@@ -21,15 +22,23 @@ usage: zxheadless [--rom PATH] [--frames N] [--until ADDR] [--state] [--raw]
   --rom PATH     ROM image to boot (default roms/48.rom)
   --frames N     frames to run (default 100; one frame is 69888 T-states)
   --until ADDR   run until PC reaches this hex address, then stop
+  --type TEXT    boot to the BASIC prompt, then type this and run on
   --state        print the CPU state as well as the screen
   --raw          print all 24 screen lines, blanks included
 
+At the K prompt a letter key is a whole keyword, so --type 'P2+2\n' types
+PRINT 2+2 and presses ENTER. \n in the text is ENTER.
+
 Addresses are hex, with or without a leading $ or 0x.";
+
+/// `MAIN-1`, where the ROM sits waiting for something to be typed.
+const MAIN_1: u16 = 0x12A9;
 
 struct Args {
     rom: String,
     frames: u64,
     until: Option<u16>,
+    text: Option<String>,
     state: bool,
     raw: bool,
 }
@@ -51,14 +60,23 @@ fn main() -> ExitCode {
         }
     };
 
-    let arrived = match args.until {
-        // A generous budget: booting to the main loop takes about 3.4 million T-states.
+    let mut arrived = match args.until {
+        // A generous budget: booting to the main loop takes about 5.9 million T-states.
         Some(addr) => machine.run_until_pc(addr, args.frames.max(1) * 69888),
+        None if args.text.is_some() => machine.run_until_pc(MAIN_1, 12_000_000),
         None => {
             machine.run_frames(args.frames);
             true
         }
     };
+
+    if let Some(text) = &args.text {
+        if !arrived {
+            eprintln!("zxheadless: never reached the BASIC prompt");
+        }
+        arrived &= machine.type_text(text);
+        machine.run_frames(args.frames.clamp(10, 50));
+    }
 
     let pc = machine.cpu.regs.pc;
     let name = RomSymbols
@@ -112,6 +130,7 @@ fn parse_args() -> Result<Args, String> {
         rom: "roms/48.rom".to_string(),
         frames: 100,
         until: None,
+        text: None,
         state: false,
         raw: false,
     };
@@ -127,6 +146,7 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|_| "--frames needs a number".to_string())?
             }
             "--until" => args.until = Some(parse_addr(&value()?)?),
+            "--type" => args.text = Some(value()?.replace("\\n", "\n")),
             "--state" => args.state = true,
             "--raw" => args.raw = true,
             "-h" | "--help" => {

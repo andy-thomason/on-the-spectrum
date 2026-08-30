@@ -561,9 +561,9 @@ about 3.4 million T-states (a few dozen frames), which is milliseconds.
 | 7 | Copyright message printed | The bottom two character rows of the display file render to `© 1982 Sinclair Research Ltd` |
 | 8 | Main loop reached | `PC` hits `0x12A9` (MAIN-1) |
 | 9 | Interrupt handler running | After N frames, `FRAMES` (`0x5C78`, 3 bytes LE) == N |
-| 10 | Cursor visible and flashing | Character `K` in inverse video at the bottom left, toggling every 16 frames |
-| 11 | Keyboard works | Inject `P`, `R`, `I`, `N`, `T`… as matrix states held for 2 frames each; assert the typed line appears in the edit area and `E_LINE` grows |
-| 12 | BASIC executes | Type `PRINT 2+2` + ENTER; assert `2` appears… then assert `4` appears at the top of the screen |
+| 10 | Cursor visible and flashing | Character `K` at the start of the edit line, in a cell whose attribute has FLASH set. The pixels are the plain character — the inversion every 16 frames is the ULA's doing, not the display file's |
+| 11 | Keyboard works | Inject matrix states held for a few frames each; assert the typed line appears in the edit area and in the buffer at `E_LINE` |
+| 12 | BASIC executes | Type `PRINT 2+2` + ENTER — at the `K` prompt that is the four keys `P`, `2`, `+`, `2`, since `P` is the whole keyword — and assert `4` appears at the top of the screen |
 
 Milestone 7 is the classic "it lives" moment; 12 is the real proof the CPU, ULA,
 keyboard and timing all work together.

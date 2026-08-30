@@ -4,12 +4,14 @@
 //! prompt, and each is checked on observable state rather than on a trace, so a failure
 //! says *what* broke rather than *where*.
 
-use on_the_spectrum::spectrum::{Machine, screen};
+use on_the_spectrum::spectrum::{Machine, screen, ula::Ula};
 
 const ROM: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/roms/48.rom");
 
-/// Booting to the main loop takes about 5.8 million T-states, most of it the RAM test.
+/// Booting to the main loop takes about 5.9 million T-states, most of it the RAM test.
 const BOOT_BUDGET: u64 = 12_000_000;
+/// `MAIN-1`: the ROM is up and waiting for something to be typed.
+const MAIN_1: u16 = 0x12A9;
 
 fn machine() -> Machine {
     Machine::new(&std::fs::read(ROM).expect("roms/48.rom"))
@@ -46,7 +48,7 @@ fn the_ram_test_completes() {
 #[test]
 fn the_system_variables_are_initialised() {
     let mut m = machine();
-    assert!(m.run_until_pc(0x12A9, BOOT_BUDGET), "never reached MAIN-1");
+    assert!(m.run_until_pc(MAIN_1, BOOT_BUDGET), "never reached MAIN-1");
     let mem = &m.bus.memory;
 
     // RAMTOP just below the user-defined graphics, and P-RAMT at the top of 48K.
@@ -69,7 +71,7 @@ fn the_system_variables_are_initialised() {
 #[test]
 fn cls_has_cleared_the_screen() {
     let mut m = machine();
-    assert!(m.run_until_pc(0x12A9, BOOT_BUDGET), "never reached MAIN-1");
+    assert!(m.run_until_pc(MAIN_1, BOOT_BUDGET), "never reached MAIN-1");
 
     // The copyright message is printed after CLS, so only the top 22 rows stay blank —
     // and "row" means a character row, which the display file's bit-spliced layout does
@@ -99,7 +101,7 @@ fn cls_has_cleared_the_screen() {
 #[test]
 fn the_copyright_message_is_on_screen() {
     let mut m = machine();
-    assert!(m.run_until_pc(0x12A9, BOOT_BUDGET), "never reached MAIN-1");
+    assert!(m.run_until_pc(MAIN_1, BOOT_BUDGET), "never reached MAIN-1");
     let text = m.screen_text();
     assert!(
         text.iter()
@@ -113,7 +115,7 @@ fn the_copyright_message_is_on_screen() {
 #[test]
 fn the_main_loop_is_reached() {
     let mut m = machine();
-    assert!(m.run_until_pc(0x12A9, BOOT_BUDGET), "never reached MAIN-1");
+    assert!(m.run_until_pc(MAIN_1, BOOT_BUDGET), "never reached MAIN-1");
     assert!(
         m.cpu.iff1,
         "the ROM enables interrupts before the main loop"
@@ -126,7 +128,7 @@ fn the_main_loop_is_reached() {
 #[test]
 fn the_frame_counter_advances() {
     let mut m = machine();
-    assert!(m.run_until_pc(0x12A9, BOOT_BUDGET), "never reached MAIN-1");
+    assert!(m.run_until_pc(MAIN_1, BOOT_BUDGET), "never reached MAIN-1");
 
     let frames = |m: &Machine| {
         let mem = &m.bus.memory;
@@ -144,13 +146,12 @@ fn the_frame_counter_advances() {
     );
 }
 
-/// Not a milestone yet — stage E is where the keyboard gets built properly — but the
-/// matrix the ULA already reads through is real, so this checks the whole loop is alive:
-/// the interrupt handler scans the keys, the editor sees one, and something appears.
+/// The matrix by hand, without the typing helpers: hold one key down and watch the whole
+/// loop turn — interrupt handler, key scan, editor, display.
 #[test]
 fn a_keypress_reaches_the_editor() {
     let mut m = machine();
-    assert!(m.run_until_pc(0x12A9, BOOT_BUDGET), "never reached MAIN-1");
+    assert!(m.run_until_pc(MAIN_1, BOOT_BUDGET), "never reached MAIN-1");
     m.run_frames(10);
 
     // "1" is half-row 3, column 0. The ROM scans on the interrupt, so hold it a while.
@@ -163,6 +164,89 @@ fn a_keypress_reaches_the_editor() {
     assert!(
         text.iter().any(|l| l.contains('1')),
         "typing 1 should put a 1 on the screen:\n{}",
+        text.join("\n")
+    );
+}
+
+// ------------------------------------------------------------------------ stage E
+
+/// Boot to the prompt, ready to type at.
+fn booted() -> Machine {
+    let mut m = machine();
+    assert!(m.run_until_pc(MAIN_1, BOOT_BUDGET), "never reached MAIN-1");
+    m
+}
+
+/// Milestone 10: the cursor. It appears as soon as there is a line to edit — as the plain
+/// character `K`, in a cell the ROM marks to FLASH. The inversion people remember is the
+/// ULA's doing, not the display file's: the pixels never change.
+#[test]
+fn the_cursor_is_a_flashing_k() {
+    let mut m = booted();
+    m.type_text("2");
+
+    let cursor = (0..screen::ROWS)
+        .flat_map(|row| (0..screen::COLUMNS).map(move |col| (col, row)))
+        .find(|&(col, row)| screen::cell_char(&m.bus.memory, col, row) == Some(('K', false)));
+    let Some((col, row)) = cursor else {
+        panic!("no K cursor on screen:\n{}", m.screen_text().join("\n"));
+    };
+
+    let attribute = m.bus.memory.peek(screen::attribute_address(col, row));
+    assert_eq!(
+        attribute & 0x80,
+        0x80,
+        "the cursor cell should be set to FLASH"
+    );
+
+    // The ULA does the flashing, sixteen frames at a time; the display file never changes.
+    assert!(!Ula::flash_inverted(0));
+    assert!(Ula::flash_inverted(16));
+    assert!(!Ula::flash_inverted(32));
+}
+
+/// Milestone 11: keys reach the edit line, and the ROM keeps the line as it goes.
+#[test]
+fn typing_reaches_the_edit_line() {
+    let mut m = booted();
+    assert!(m.type_text("12345"));
+
+    assert_eq!(m.edit_line(), b"12345", "E_LINE should hold what was typed");
+    let text = m.screen_text();
+    assert!(
+        text.iter().any(|l| l.starts_with("12345")),
+        "screen reads:\n{}",
+        text.join("\n")
+    );
+}
+
+/// Milestone 12: BASIC executes. **This is "the emulator works".**
+#[test]
+fn basic_runs_print_2_plus_2() {
+    let mut m = booted();
+
+    // At the K prompt the P key is the whole PRINT keyword — which is how anyone types
+    // this on a real machine — so the edit line holds one token and three characters.
+    assert!(m.type_text("P2+2"));
+    assert_eq!(
+        m.edit_line(),
+        [0xF5, b'2', b'+', b'2'],
+        "E_LINE should hold the PRINT token and the expression"
+    );
+
+    assert!(m.type_text("\n"));
+    m.run_frames(10);
+
+    let text = m.screen_text();
+    assert_eq!(
+        text[0].trim_end(),
+        "4",
+        "screen reads:\n{}",
+        text.join("\n")
+    );
+    assert!(
+        text.iter().any(|l| l.starts_with("0 OK, 0:1")),
+        "BASIC should report success:\n{}",
         text.join("\n")
     );
 }

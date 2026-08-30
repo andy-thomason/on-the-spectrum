@@ -7,15 +7,15 @@ sharing the same decoder for tracing and debugging, and a [Bevy](https://bevyeng
 front end with the display and a clickable keyboard built from a photograph of the real
 machine.
 
-**Status:** stages A–D complete — **it boots**. One decoder for all 1792 opcodes,
+**Status:** stages A–E complete — **the emulator works**. One decoder for all 1792 opcodes,
 checked against the generated spec tables; a disassembler that agrees with the annotated
 ROM listing; an interpreter that spends every T-state through the machine-cycle
 primitives and passes all **1,604,000**
 [SingleStepTests](https://github.com/SingleStepTests/z80) per-opcode cases — registers,
 memory, MEMPTR, `Q`, ports and the bus state of every individual T-state; and a machine
-that runs the real 48K ROM to the copyright message and on into the main loop, with the
-50 Hz interrupt counting frames. Next is stage E: the keyboard, and `PRINT 2+2`
-headlessly.
+that runs the real 48K ROM to the copyright message, into the main loop, and on to a
+BASIC prompt that answers `PRINT 2+2` with `4` — typed on the key matrix, headlessly.
+Next is stage F: the Bevy front end.
 
 ## Documentation
 
@@ -69,10 +69,19 @@ AF 0093  BC 1705  DE 00E0  HL 50E0  IX 0000  IY 5C3A  SP FF56  IR 3F21  IFF11 IM
 ┌────────────────────────────────┐
 │© 1982 Sinclair Research Ltd    │
 └────────────────────────────────┘
+
+$ cargo run --bin zxheadless -- --type 'P2+2\n'
+frames 164  T 11461637  PC $15F8  border 7
+┌────────────────────────────────┐
+│4                               │
+│0 OK, 0:1                       │
+└────────────────────────────────┘
 ```
 
-The screen is read back through the ROM's own character set, so "does it look right?"
-becomes an exact string comparison.
+Keys go in as matrix states held for a few frames, exactly as a finger does it — the ROM
+does its own debouncing, repeat and decoding on the 50 Hz interrupt, so at the `K` prompt
+the single key `P` is the whole `PRINT` keyword. The screen comes back out through the
+ROM's own character set, so "does it look right?" becomes an exact string comparison.
 
 `zxdis` shares its decoder with the interpreter and annotates ROM entry points from the
 names `build.rs` harvests out of [doc/ref/Spectrum48-disassembly.asm](doc/ref/Spectrum48-disassembly.asm):
@@ -101,7 +110,7 @@ python3 doc/tools/gen_z80.py rust-fixture > tests/fixtures/opcodes.rs
 | `tests/listing.rs` | `zxdis roms/48.rom` says the same thing as the annotated ROM disassembly at every labelled address it reaches |
 | `tests/timing.rs` | Every opcode's T-state total, on both arms of every conditional, matches the spec's timing column — which the interpreter never consults |
 | `tests/z80_json.rs` | The SingleStepTests per-opcode vectors: 1000 cases each for 1604 instruction sequences, checked down to the bus state of each T-state |
-| `tests/boot.rs` | Boot milestones 1–9: the reset vector, the RAM test, `RAMTOP`, the system variables, the stream table, `CLS`, the copyright message, the main loop, and `FRAMES` counting one per interrupt |
+| `tests/boot.rs` | Boot milestones 1–12: the reset vector, the RAM test, `RAMTOP`, the system variables, the stream table, `CLS`, the copyright message, the main loop, `FRAMES` counting one per interrupt, the flashing cursor, typing into the edit line, and `PRINT 2+2` answering `4` |
 
 The vectors are 1.3 GB expanded and are not in the repository:
 

@@ -33,6 +33,12 @@ impl Ula {
         self.ear_mic = val & 0x18;
     }
 
+    /// Whether FLASH cells are currently showing inverted, which the ULA swaps every
+    /// [`FLASH_FRAMES`] frames. The renderer applies it; the display file never changes.
+    pub fn flash_inverted(frames: u64) -> bool {
+        (frames / FLASH_FRAMES) % 2 == 1
+    }
+
     /// `IN A,(0xFE)`: the selected keyboard half-rows in bits 0–4, bits 5 and 7 always set,
     /// and bit 6 reading back the last EAR level written — which is what an issue 3 machine
     /// does, and enough for everything short of loading tape.

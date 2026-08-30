@@ -17,6 +17,110 @@ pub const HALF_ROWS: [[&str; 5]; 8] = [
     ["SPACE", "SYM SHIFT", "M", "N", "B"],
 ];
 
+/// A position in the matrix: which half-row, and which of its five keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Key {
+    pub half_row: usize,
+    pub column: usize,
+}
+
+impl Key {
+    pub const CAPS_SHIFT: Key = Key {
+        half_row: 0,
+        column: 0,
+    };
+    pub const SYM_SHIFT: Key = Key {
+        half_row: 7,
+        column: 1,
+    };
+    pub const ENTER: Key = Key {
+        half_row: 6,
+        column: 0,
+    };
+    pub const SPACE: Key = Key {
+        half_row: 7,
+        column: 0,
+    };
+
+    /// Look a key up by the name it has in [`HALF_ROWS`], ignoring case.
+    pub fn named(name: &str) -> Option<Key> {
+        HALF_ROWS.iter().enumerate().find_map(|(half_row, keys)| {
+            keys.iter()
+                .position(|k| k.eq_ignore_ascii_case(name))
+                .map(|column| Key { half_row, column })
+        })
+    }
+}
+
+/// A key, and the shift held down with it. Everything the Spectrum's forty keys can say
+/// is one of these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chord {
+    pub key: Key,
+    pub shift: Option<Key>,
+}
+
+impl Chord {
+    pub fn plain(key: Key) -> Chord {
+        Chord { key, shift: None }
+    }
+
+    pub fn symbol(key: Key) -> Chord {
+        Chord {
+            key,
+            shift: Some(Key::SYM_SHIFT),
+        }
+    }
+
+    pub fn caps(key: Key) -> Chord {
+        Chord {
+            key,
+            shift: Some(Key::CAPS_SHIFT),
+        }
+    }
+
+    /// The keys to press to get `c` at a BASIC prompt in **L** mode.
+    ///
+    /// Letters map to their key whatever their case, because the ROM's cursor mode decides
+    /// what a letter key means: the same `P` is the `PRINT` keyword in **K** mode and a
+    /// `p` in **L** mode, and synthesising CAPS SHIFT would change neither for the better.
+    pub fn for_char(c: char) -> Option<Chord> {
+        let symbol = |name: &str| Key::named(name).map(Chord::symbol);
+        match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' => {
+                Key::named(&c.to_ascii_uppercase().to_string()).map(Chord::plain)
+            }
+            ' ' => Some(Chord::plain(Key::SPACE)),
+            '\n' | '\r' => Some(Chord::plain(Key::ENTER)),
+            '!' => symbol("1"),
+            '@' => symbol("2"),
+            '#' => symbol("3"),
+            '$' => symbol("4"),
+            '%' => symbol("5"),
+            '&' => symbol("6"),
+            '\'' => symbol("7"),
+            '(' => symbol("8"),
+            ')' => symbol("9"),
+            '_' => symbol("0"),
+            '<' => symbol("R"),
+            '>' => symbol("T"),
+            ';' => symbol("O"),
+            '"' => symbol("P"),
+            '-' => symbol("J"),
+            '+' => symbol("K"),
+            '=' => symbol("L"),
+            ':' => symbol("Z"),
+            '£' => symbol("X"),
+            '?' => symbol("C"),
+            '/' => symbol("V"),
+            '*' => symbol("B"),
+            ',' => symbol("N"),
+            '.' => symbol("M"),
+            _ => None,
+        }
+    }
+}
+
 /// One byte per half-row; a set bit is a key held down.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Keyboard {
@@ -47,6 +151,14 @@ impl Keyboard {
             }
         }
         false
+    }
+
+    /// Hold a key and its shift, if it has one.
+    pub fn press(&mut self, chord: Chord) {
+        self.set(chord.key.half_row, chord.key.column, true);
+        if let Some(shift) = chord.shift {
+            self.set(shift.half_row, shift.column, true);
+        }
     }
 
     pub fn release_all(&mut self) {
