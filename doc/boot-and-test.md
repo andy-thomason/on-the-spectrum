@@ -552,7 +552,7 @@ about 3.4 million T-states (a few dozen frames), which is milliseconds.
 
 | # | Milestone | How to detect |
 |---|---|---|
-| 1 | Reset vector executes | After 3 steps: `PC == 0x11CB`, `DE == 0xFFFF`, `A == 0`, IFF1 clear |
+| 1 | Reset vector executes | After 4 steps: `PC == 0x11CB`, `DE == 0xFFFF`, `A == 0`, IFF1 clear |
 | 2 | RAM test completes | `PC` reaches `0x11EF` (RAM-DONE) |
 | 3 | `RAMTOP` set | After `0x1219`, `peek16(0x5CB2)` is sane (≈`0xFF57` on 48K) and `peek16(0x5CB4) == 0xFFFF` |
 | 4 | System variables initialised | `ATTR_P` (`0x5C8D`) == `0x38`, `ATTR_T` (`0x5C8F`) == `0x38`, `BORDCR` (`0x5C48`) == `0x38`, `REPDEL` (`0x5C09`) == `0x23`, `REPPER` (`0x5C0A`) == `0x05` |

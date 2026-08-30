@@ -7,13 +7,15 @@ sharing the same decoder for tracing and debugging, and a [Bevy](https://bevyeng
 front end with the display and a clickable keyboard built from a photograph of the real
 machine.
 
-**Status:** stages A and B complete. One decoder for all 1792 opcodes, checked against
-the generated spec tables; a disassembler that agrees with the annotated ROM listing at
-every labelled address straight-line decoding reaches; and an interpreter that spends
-every T-state through the machine-cycle primitives and passes all **1,604,000**
+**Status:** stages A–D complete — **it boots**. One decoder for all 1792 opcodes,
+checked against the generated spec tables; a disassembler that agrees with the annotated
+ROM listing; an interpreter that spends every T-state through the machine-cycle
+primitives and passes all **1,604,000**
 [SingleStepTests](https://github.com/SingleStepTests/z80) per-opcode cases — registers,
-memory, MEMPTR, `Q`, ports, and the bus state of every individual T-state. Next is
-stage C: memory, ROM protection and the `Machine`, up to a headless `CLS`.
+memory, MEMPTR, `Q`, ports and the bus state of every individual T-state; and a machine
+that runs the real 48K ROM to the copyright message and on into the main loop, with the
+50 Hz interrupt counting frames. Next is stage E: the keyboard, and `PRINT 2+2`
+headlessly.
 
 ## Documentation
 
@@ -52,9 +54,25 @@ Primary reference material is mirrored under [doc/ref/](doc/ref/).
 ```sh
 cargo build
 cargo test                                   # see "Tests" below
+cargo run --bin zxheadless                   # boot the ROM and print the screen
 cargo run --bin zxdis -- roms/48.rom         # disassemble the ROM
 cargo run --bin zxdis -- --start 11CB --end 1220 roms/48.rom
 ```
+
+`zxheadless` is the machine with no window attached — everything the Bevy front end will
+do rests on it, and anything the UI can do a test can do too:
+
+```
+$ cargo run --bin zxheadless -- --until 12A9 --state
+frames 84  T 5929236  PC $12A9 (MAIN-1)  border 7
+AF 0093  BC 1705  DE 00E0  HL 50E0  IX 0000  IY 5C3A  SP FF56  IR 3F21  IFF11 IM1
+┌────────────────────────────────┐
+│© 1982 Sinclair Research Ltd    │
+└────────────────────────────────┘
+```
+
+The screen is read back through the ROM's own character set, so "does it look right?"
+becomes an exact string comparison.
 
 `zxdis` shares its decoder with the interpreter and annotates ROM entry points from the
 names `build.rs` harvests out of [doc/ref/Spectrum48-disassembly.asm](doc/ref/Spectrum48-disassembly.asm):
@@ -83,6 +101,7 @@ python3 doc/tools/gen_z80.py rust-fixture > tests/fixtures/opcodes.rs
 | `tests/listing.rs` | `zxdis roms/48.rom` says the same thing as the annotated ROM disassembly at every labelled address it reaches |
 | `tests/timing.rs` | Every opcode's T-state total, on both arms of every conditional, matches the spec's timing column — which the interpreter never consults |
 | `tests/z80_json.rs` | The SingleStepTests per-opcode vectors: 1000 cases each for 1604 instruction sequences, checked down to the bus state of each T-state |
+| `tests/boot.rs` | Boot milestones 1–9: the reset vector, the RAM test, `RAMTOP`, the system variables, the stream table, `CLS`, the copyright message, the main loop, and `FRAMES` counting one per interrupt |
 
 The vectors are 1.3 GB expanded and are not in the repository:
 
