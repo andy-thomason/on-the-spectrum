@@ -4,6 +4,7 @@
 //! for the length of an instruction — `Machine` is the pair, and [`SpectrumBus`] is what
 //! implements [`Bus`].
 
+pub mod beeper;
 pub mod keyboard;
 pub mod memory;
 pub mod screen;
@@ -12,6 +13,7 @@ pub mod text;
 pub mod ula;
 
 use crate::z80::{Bus, Cpu};
+use beeper::Beeper;
 use keyboard::{Chord, Keyboard};
 use memory::Memory;
 use ula::{FRAME_T, INT_ACTIVE_T, Ula};
@@ -32,6 +34,9 @@ pub struct SpectrumBus {
     pub memory: Memory,
     pub ula: Ula,
     pub keyboard: Keyboard,
+    /// Turns the speaker bit into samples. Costs nothing while nothing is making a sound:
+    /// only a changed level is recorded.
+    pub beeper: Beeper,
     /// T-states since the start of the current frame. Contention and the interrupt both
     /// depend on this, which is why it lives here and not in the CPU.
     pub frame_t: u32,
@@ -39,6 +44,14 @@ pub struct SpectrumBus {
     /// Off until phase H. The accounting above is identical either way: switching
     /// contention on is one function and this flag, not a rewrite.
     pub contention_enabled: bool,
+}
+
+impl SpectrumBus {
+    /// T-states since the machine started. The frame counter and the position within the
+    /// frame between them make a monotonic clock, which is what the beeper needs.
+    pub fn t(&self) -> u64 {
+        self.frames * FRAME_T as u64 + self.frame_t as u64
+    }
 }
 
 impl Bus for SpectrumBus {
@@ -63,6 +76,13 @@ impl Bus for SpectrumBus {
 
     fn out_port(&mut self, port: u16, val: u8) {
         if port & 1 == 0 {
+            // Only a *change* of level is a sound. Manic Miner writes this port ten
+            // thousand times a second and moves the speaker on two per cent of them.
+            let level = val & 0x10 != 0;
+            if level != self.ula.speaker() {
+                let t = self.t();
+                self.beeper.write(t, level);
+            }
             self.ula.write_port(val);
         }
     }
@@ -78,6 +98,10 @@ impl Bus for SpectrumBus {
         if self.frame_t >= FRAME_T {
             self.frame_t -= FRAME_T;
             self.frames += 1;
+            // Once a frame, so samples come out steadily whether or not anything is
+            // making a sound, and whatever is driving the machine.
+            let t = self.t();
+            self.beeper.advance_to(t);
         }
         // A scanline or beam renderer hooks in here, and nowhere else.
     }
@@ -107,6 +131,7 @@ impl Machine {
                 memory,
                 ula: Ula::new(),
                 keyboard: Keyboard::new(),
+                beeper: Beeper::default(),
                 frame_t: 0,
                 frames: 0,
                 contention_enabled: false,

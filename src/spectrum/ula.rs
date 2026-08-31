@@ -39,6 +39,11 @@ impl Ula {
         (frames / FLASH_FRAMES) % 2 == 1
     }
 
+    /// The speaker level: bit 4 of the last write, and the whole of the machine's sound.
+    pub fn speaker(&self) -> bool {
+        self.ear_mic & 0x10 != 0
+    }
+
     /// `IN A,(0xFE)`: the selected keyboard half-rows in bits 0–4, bits 5 and 7 always set,
     /// and bit 6 reading back the last EAR level written — which is what an issue 3 machine
     /// does, and enough for everything short of loading tape.

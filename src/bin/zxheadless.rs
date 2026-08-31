@@ -12,7 +12,7 @@
 
 use std::process::ExitCode;
 
-use on_the_spectrum::spectrum::{Machine, screen, snapshot};
+use on_the_spectrum::spectrum::{Machine, beeper, screen, snapshot};
 use on_the_spectrum::symbols::RomSymbols;
 use on_the_spectrum::z80::Symbols;
 
@@ -28,6 +28,7 @@ usage: zxheadless [--rom PATH] [--load PATH] [--frames N] [--until ADDR] [--stat
   --state        print the CPU state as well as the screen
   --raw          print all 24 screen lines, blanks included
   --ppm PATH     also write the rendered frame as a binary PPM image
+  --wav PATH     also write the sound of the run as a 16-bit mono WAV
 
 At the K prompt a letter key is a whole keyword, so --type 'P2+2\n' types
 PRINT 2+2 and presses ENTER. \n in the text is ENTER.
@@ -45,6 +46,7 @@ struct Args {
     state: bool,
     raw: bool,
     ppm: Option<String>,
+    wav: Option<String>,
     sna: Option<String>,
     save_sna: Option<String>,
 }
@@ -74,6 +76,12 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+    }
+
+    if args.wav.is_some() {
+        // Keep the whole recording rather than the last second of it.
+        let rate = machine.bus.beeper.sample_rate() as usize;
+        machine.bus.beeper.set_capacity(rate * 600);
     }
 
     let mut arrived = match args.until {
@@ -144,6 +152,20 @@ fn main() -> ExitCode {
         }
     }
 
+    if let Some(path) = &args.wav {
+        let rate = machine.bus.beeper.sample_rate();
+        let samples = machine.bus.beeper.take();
+        if let Err(e) = std::fs::write(path, beeper::wav(&samples, rate)) {
+            eprintln!("zxheadless: {path}: {e}");
+            return ExitCode::FAILURE;
+        }
+        println!(
+            "wrote {path}  {} samples, {:.2} s at {rate} Hz",
+            samples.len(),
+            samples.len() as f64 / rate as f64
+        );
+    }
+
     if let Some(path) = &args.ppm {
         if let Err(e) = write_ppm(&machine, path) {
             eprintln!("zxheadless: {path}: {e}");
@@ -187,6 +209,7 @@ fn parse_args() -> Result<Args, String> {
         state: false,
         raw: false,
         ppm: None,
+        wav: None,
         sna: None,
         save_sna: None,
     };
@@ -206,6 +229,7 @@ fn parse_args() -> Result<Args, String> {
             "--state" => args.state = true,
             "--raw" => args.raw = true,
             "--ppm" => args.ppm = Some(value()?),
+            "--wav" => args.wav = Some(value()?),
             "--load" => args.sna = Some(value()?),
             "--save-sna" => args.save_sna = Some(value()?),
             "-h" | "--help" => {

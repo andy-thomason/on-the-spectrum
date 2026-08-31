@@ -20,8 +20,10 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::{PrimaryWindow, WindowResolution};
 
+mod audio;
 mod menu;
 
+use audio::AudioPlugin;
 use menu::{Menu, MenuPlugin};
 
 use on_the_spectrum::spectrum::keyboard::{Chord, Key};
@@ -104,7 +106,7 @@ fn main() -> AppExit {
                 // mud the moment the window is not at an exact multiple.
                 .set(ImagePlugin::default_nearest()),
         )
-        .add_plugins(MenuPlugin)
+        .add_plugins((MenuPlugin, AudioPlugin))
         .insert_resource(ClearColor(Color::BLACK))
         .init_resource::<HostText>()
         .insert_resource(Emulator {

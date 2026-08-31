@@ -19,7 +19,7 @@ is a way to get a game *in*, and sound once it is there.
 | Keyboard matrix, with ghosting | Done |
 | Snapshot loading | `.sna` and `.z80` done — [snapshot.rs](../src/spectrum/snapshot.rs) |
 | Tape loading | **Missing** |
-| Beeper | **Missing** |
+| Beeper | Done — [beeper.rs](../src/spectrum/beeper.rs), `cpal` in the UI |
 | Kempston joystick | **Missing** — and mis-reads today, see §6 |
 | Contention | Not needed for most games; stage H |
 
@@ -157,7 +157,15 @@ all, so a beeper that resamples on every `OUT` will do a great deal of nothing. 
 shortest half-cycle is 0.93 ms against 22.7 µs for a 44100 Hz sample, so the sample rate
 is nowhere near the difficulty.
 
-**The plumbing is the hard part, not the emulation.** `bevy_audio` is built for playing
+**And it was the plumbing, not the emulation.** The generator came out at about seventy
+lines: integrate the level across each sample's T-states, block the DC so a held level
+decays instead of sitting as an offset, and hand over `f32`s. What took the care was the
+seam — `cpal` on a background callback, a queue that is trimmed rather than allowed to
+grow, and the beeper generating at whatever rate the device asked for (48000 Hz here) so
+nothing has to resample. Measured running: samples produced at exactly the rate the device
+drains them, with the queue steady between 2000 and 2900 samples, 42 to 60 ms.
+
+**What was true of `bevy_audio` before we started, and still is.** `bevy_audio` is built for playing
 assets, not for streaming a buffer generated every 20 ms, and it is not in the `2d`
 feature set the UI uses. Expect to add `cpal` (or `rodio`) directly and to spend the time
 on the seam rather than the signal: the emulator produces 19.968 ms of audio per frame
@@ -208,7 +216,7 @@ will look wrong; they are the minority, and the fix is the same phase H work.
 | ✅ 3 | `.z80` versions 1–3, 48K only | Every header field at its offset, RLE against an independent encoder, pages placed by number, 128K refused |
 | 4 | Kempston, and `0x00` for unattached ports | A game that auto-detects a joystick behaves |
 | 5 | `.tap` through the `L0556` trap | A standard-speed game loads from tape |
-| 6 | Beeper through `cpal` | The ROM's key click, then a game's music |
+| ✅ 6 | Beeper through `cpal` | `zxheadless --wav` records a run; the samples are checked in [tests/beeper.rs](../tests/beeper.rs) and the seam holds 50 ms of latency without drifting |
 
 Steps 1 and 2 are one sitting and they are the demo — a real game in the window derisks
 everything after them.

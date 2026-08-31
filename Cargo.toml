@@ -12,13 +12,15 @@ edition = "2024"
 # `bevy_sprite_render` (a separate crate since 0.17) is what actually draws it. Picking a
 # feature list by hand gets you a window that renders nothing, silently.
 bevy = { version = "0.19", optional = true, default-features = false, features = ["2d"] }
+# The beeper needs somewhere to go. cpal is the audio device and nothing more.
+cpal = { version = "0.18.2", optional = true }
 
 # The menu reads the Internet Archive's JSON. Nothing else in the emulator parses any.
 serde_json = { version = "1.0", optional = true }
 
 [features]
 default = []
-ui = ["dep:bevy", "dep:serde_json"]
+ui = ["dep:bevy", "dep:cpal", "dep:serde_json"]
 
 [[bin]]
 name = "zxbevy"
