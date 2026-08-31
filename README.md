@@ -24,6 +24,7 @@ with the host keyboard driving the matrix. Next: snapshots, sound and tape.
 | [doc/initial-plan.md](doc/initial-plan.md) | Architecture, phases, decisions, risks — **start here** |
 | [doc/boot-and-test.md](doc/boot-and-test.md) | The core: decoder, T-state model, interpreter, disassembler, tracing, test strategy |
 | [doc/ui.md](doc/ui.md) | The Bevy app: screen, emulation pacing, host keyboard input, debug panels |
+| [doc/get-a-game-running.md](doc/get-a-game-running.md) | Stage G: snapshots, tape, the beeper, and what is not needed |
 | [doc/z80-instruction-set.md](doc/z80-instruction-set.md) | Z80 reference: flags, MEMPTR, interrupts, decode algorithm, complete opcode tables |
 | [doc/spectrum-memory-map.md](doc/spectrum-memory-map.md) | Memory map, ROM entry points, system variables, port `0xFE`, contention, tape format |
 | [doc/spectrum-video.md](doc/spectrum-video.md) | Display file layout, attributes, palette, frame and line timing |

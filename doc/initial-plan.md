@@ -16,6 +16,7 @@ keyboard.
 | [spectrum-video.md](spectrum-video.md) | Display file address arithmetic, attributes, palette, frame and line timing, rendering strategies |
 | [boot-and-test.md](boot-and-test.md) | Core design: decoder, interpreter, disassembler, tracing, and the five-layer test strategy ending in ROM boot milestones |
 | [ui.md](ui.md) | The Bevy app: screen texture, emulation pacing, host keyboard input, debug panels |
+| [get-a-game-running.md](get-a-game-running.md) | Stage G: `.sna` and `.z80` snapshots, `.tap` loading, the beeper, the Kempston joystick |
 
 ## Materials gathered
 
