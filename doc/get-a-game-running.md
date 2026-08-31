@@ -27,9 +27,16 @@ New modules, in the layout [boot-and-test.md](boot-and-test.md) §2 already anti
 `spectrum/snapshot.rs` (**done**, `.sna` only), `spectrum/tape.rs`, and a beeper that
 lives in `spectrum/ula.rs` beside the port it comes out of.
 
-Neither loader has yet read a file written by another program — the fixtures are all
-built here. A `fetch.sh` for a few freely distributable snapshots, on the pattern of
-[tests/vectors/fetch.sh](../tests/vectors/fetch.sh), is the obvious next safety net.
+Both loaders have now been read a real file: an `#[ignore]`d test in the menu module
+fetches the catalogue, downloads the first few items and loads them, which is how Jetpac,
+Atic Atac and Manic Miner first came up on the screen.
+
+    cargo test --features ui --bin zxbevy -- --ignored --nocapture
+
+What that turned up: the snapshots in that collection are often taken at a title screen
+that is sitting in the ROM's `PAUSE` loop, so what you see is the game's own artwork
+rather than gameplay. Getting past it wants the keyboard, which works, and in some cases
+the tape, which does not — §3.
 
 One thing §1 turned up that was worth knowing before writing the `.z80` loader: a
 round-trip through `.sna` is *not* byte-identical in RAM. The format has PC pushed onto
@@ -151,10 +158,18 @@ send it haywire before you have plugged anything in. Fix that with the joystick 
 return `0x00` when no joystick is attached, and the five bits when one is. The Sinclair
 joysticks need no work at all, being keyboard rows 3 and 4.
 
-**A file to load.** `zxbevy` takes no arguments yet. A path on the command line is
-enough to start; drag-and-drop is a Bevy `FileDragAndDrop` event and can come later.
-Give `zxheadless` the same flag, so a snapshot can be loaded and its screen dumped as
-text or PPM without a window — that is how these loaders get tested.
+**A file to load.** Done: a path on the command line for `zxbevy`, `--load` for
+`zxheadless` so a snapshot's screen can be dumped as text or PPM without a window.
+Drag-and-drop is a Bevy `FileDragAndDrop` event and can come later.
+
+**A startup menu.** Also done, and it is where the files come from now: `zxbevy` opens
+with a list drawn on the Spectrum's own screen in the ROM's font
+([`spectrum::text`](../src/spectrum/text.rs)), fetched live from the Internet Archive's
+ZX Spectrum collection. Arrows or `1`–`9` to choose, `R` for another page, `ESC` to boot
+the ROM instead. Snapshots already in `games/` are listed first, so it works with no
+network at all. Nothing is checked into this repository: no URLs to rot, nothing of
+anyone else's in the source, and the choice of what to download stays with whoever is
+sitting in front of it. `games/` is not tracked.
 
 ## 7. What you do not need
 

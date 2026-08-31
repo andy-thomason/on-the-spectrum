@@ -9,3 +9,6 @@ doc/ref/z80-documented.pdf
 # The SingleStepTests/z80 per-opcode vectors: 1604 files, 1.3 GB expanded. Fetched by
 # tests/vectors/fetch.sh, not redistributed here.
 /tests/vectors/z80
+
+# Downloaded games. Not ours to redistribute.
+/games

@@ -82,6 +82,11 @@ frames 164  T 11461637  PC $15F8  border 7
 └────────────────────────────────┘
 ```
 
+`zxbevy` opens with a menu of games, drawn on the Spectrum's own screen in the ROM's
+font and fetched live from the Internet Archive; arrows or `1`–`9` to pick, `R` for
+another page, `ESC` to boot the ROM instead. Downloads land in `games/`, which is not
+tracked — nothing of anyone else's is checked in here.
+
 Keys go in as matrix states held for a few frames, exactly as a finger does it — the ROM
 does its own debouncing, repeat and decoding on the 50 Hz interrupt, so at the `K` prompt
 the single key `P` is the whole `PRINT` keyword. The screen comes back out through the

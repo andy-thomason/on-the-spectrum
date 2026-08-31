@@ -20,6 +20,10 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::{PrimaryWindow, WindowResolution};
 
+mod menu;
+
+use menu::{Menu, MenuPlugin};
+
 use on_the_spectrum::spectrum::keyboard::{Chord, Key};
 use on_the_spectrum::spectrum::{Machine, screen, snapshot};
 
@@ -33,12 +37,12 @@ const MAX_CATCH_UP: f64 = FRAME_SECONDS * 4.0;
 const INITIAL_SCALE: u32 = 3;
 
 #[derive(Resource)]
-struct Emulator {
-    machine: Machine,
+pub struct Emulator {
+    pub machine: Machine,
     /// Seconds of emulated time owed.
-    accumulator: f64,
+    pub accumulator: f64,
     /// 1.0 is real time; 0.0 is paused.
-    speed: f64,
+    pub speed: f64,
 }
 
 /// What each held host key produced as text.
@@ -67,10 +71,14 @@ fn main() -> AppExit {
     };
 
     let mut machine = Machine::new(&rom);
+    let mut from_file = false;
     // One argument, and it is a snapshot to start from rather than a cold boot.
     if let Some(path) = std::env::args().nth(1) {
         match snapshot::load_path(&mut machine, std::path::Path::new(&path)) {
-            Ok(()) => println!("zxbevy: loaded {path}"),
+            Ok(()) => {
+                println!("zxbevy: loaded {path}");
+                from_file = true;
+            }
             Err(e) => {
                 eprintln!("zxbevy: {path}: {e}");
                 return AppExit::error();
@@ -96,14 +104,25 @@ fn main() -> AppExit {
                 // mud the moment the window is not at an exact multiple.
                 .set(ImagePlugin::default_nearest()),
         )
+        .add_plugins(MenuPlugin)
         .insert_resource(ClearColor(Color::BLACK))
         .init_resource::<HostText>()
         .insert_resource(Emulator {
             machine,
             accumulator: 0.0,
-            speed: 1.0,
+            // Nothing runs until the menu has been dealt with.
+            speed: 0.0,
         })
         .add_systems(Startup, setup)
+        .add_systems(
+            Startup,
+            move |mut menu: ResMut<Menu>, mut emu: ResMut<Emulator>| {
+                if from_file {
+                    menu.open = false;
+                    emu.speed = 1.0;
+                }
+            },
+        )
         .add_systems(Update, (keyboard, run_emulation, blit, screenshot).chain())
         .run()
 }
@@ -141,7 +160,15 @@ fn keyboard(
     mut host: ResMut<HostText>,
     mut input: MessageReader<KeyboardInput>,
     keys: Res<ButtonInput<KeyCode>>,
+    menu: Res<Menu>,
 ) {
+    if menu.open {
+        // The menu has the keyboard. Let go of anything the machine was holding.
+        emu.machine.bus.keyboard.release_all();
+        host.0.clear();
+        input.clear();
+        return;
+    }
     for event in input.read() {
         match event.state {
             ButtonState::Pressed => {
