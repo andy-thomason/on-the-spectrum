@@ -12,14 +12,16 @@
 
 use std::process::ExitCode;
 
-use on_the_spectrum::spectrum::{Machine, screen};
+use on_the_spectrum::spectrum::{Machine, screen, snapshot};
 use on_the_spectrum::symbols::RomSymbols;
 use on_the_spectrum::z80::Symbols;
 
 const USAGE: &str = "\
-usage: zxheadless [--rom PATH] [--frames N] [--until ADDR] [--state] [--raw]
+usage: zxheadless [--rom PATH] [--load PATH] [--frames N] [--until ADDR] [--state] [--raw]
 
   --rom PATH     ROM image to boot (default roms/48.rom)
+  --load PATH    load a .sna or .z80 snapshot instead of booting from cold
+  --save-sna P   write the machine out as a .sna when the run finishes
   --frames N     frames to run (default 100; one frame is 69888 T-states)
   --until ADDR   run until PC reaches this hex address, then stop
   --type TEXT    boot to the BASIC prompt, then type this and run on
@@ -43,6 +45,8 @@ struct Args {
     state: bool,
     raw: bool,
     ppm: Option<String>,
+    sna: Option<String>,
+    save_sna: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -62,10 +66,22 @@ fn main() -> ExitCode {
         }
     };
 
+    if let Some(path) = &args.sna {
+        match snapshot::load_path(&mut machine, std::path::Path::new(path)) {
+            Ok(()) => println!("loaded {path}"),
+            Err(e) => {
+                eprintln!("zxheadless: {path}: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     let mut arrived = match args.until {
         // A generous budget: booting to the main loop takes about 5.9 million T-states.
         Some(addr) => machine.run_until_pc(addr, args.frames.max(1) * 69888),
-        None if args.text.is_some() => machine.run_until_pc(MAIN_1, 12_000_000),
+        None if args.text.is_some() && args.sna.is_none() => {
+            machine.run_until_pc(MAIN_1, 12_000_000)
+        }
         None => {
             machine.run_frames(args.frames);
             true
@@ -112,6 +128,22 @@ fn main() -> ExitCode {
         );
     }
 
+    if let Some(path) = &args.save_sna {
+        match snapshot::save_sna(&machine) {
+            Ok(data) => {
+                if let Err(e) = std::fs::write(path, &data) {
+                    eprintln!("zxheadless: {path}: {e}");
+                    return ExitCode::FAILURE;
+                }
+                println!("wrote {path}  {} bytes", data.len());
+            }
+            Err(e) => {
+                eprintln!("zxheadless: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     if let Some(path) = &args.ppm {
         if let Err(e) = write_ppm(&machine, path) {
             eprintln!("zxheadless: {path}: {e}");
@@ -155,6 +187,8 @@ fn parse_args() -> Result<Args, String> {
         state: false,
         raw: false,
         ppm: None,
+        sna: None,
+        save_sna: None,
     };
 
     let mut argv = std::env::args().skip(1);
@@ -172,6 +206,8 @@ fn parse_args() -> Result<Args, String> {
             "--state" => args.state = true,
             "--raw" => args.raw = true,
             "--ppm" => args.ppm = Some(value()?),
+            "--load" => args.sna = Some(value()?),
+            "--save-sna" => args.save_sna = Some(value()?),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);

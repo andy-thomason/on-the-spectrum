@@ -2,6 +2,7 @@
 //!
 //! ```sh
 //! cargo run --release --features ui --bin zxbevy
+//! cargo run --release --features ui --bin zxbevy -- game.z80
 //! ```
 //!
 //! The Bevy layer adds no emulator capability. It paces `Machine::run_frame` against real
@@ -20,7 +21,7 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use bevy::window::{PrimaryWindow, WindowResolution};
 
 use on_the_spectrum::spectrum::keyboard::{Chord, Key};
-use on_the_spectrum::spectrum::{Machine, screen};
+use on_the_spectrum::spectrum::{Machine, screen, snapshot};
 
 const ROM: &str = "roms/48.rom";
 /// 69888 T-states at 3.5 MHz — 19.968 ms, which is neither 20 ms nor the host's refresh
@@ -65,6 +66,18 @@ fn main() -> AppExit {
         }
     };
 
+    let mut machine = Machine::new(&rom);
+    // One argument, and it is a snapshot to start from rather than a cold boot.
+    if let Some(path) = std::env::args().nth(1) {
+        match snapshot::load_path(&mut machine, std::path::Path::new(&path)) {
+            Ok(()) => println!("zxbevy: loaded {path}"),
+            Err(e) => {
+                eprintln!("zxbevy: {path}: {e}");
+                return AppExit::error();
+            }
+        }
+    }
+
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -86,7 +99,7 @@ fn main() -> AppExit {
         .insert_resource(ClearColor(Color::BLACK))
         .init_resource::<HostText>()
         .insert_resource(Emulator {
-            machine: Machine::new(&rom),
+            machine,
             accumulator: 0.0,
             speed: 1.0,
         })

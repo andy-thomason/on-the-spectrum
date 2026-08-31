@@ -17,15 +17,24 @@ is a way to get a game *in*, and sound once it is there.
 | 50 Hz interrupt, frame timing, `HALT` | Done |
 | Display file → RGBA, FLASH | Done (whole-frame renderer) |
 | Keyboard matrix, with ghosting | Done |
-| Snapshot loading | **Missing** |
+| Snapshot loading | `.sna` and `.z80` done — [snapshot.rs](../src/spectrum/snapshot.rs) |
 | Tape loading | **Missing** |
 | Beeper | **Missing** |
 | Kempston joystick | **Missing** — and mis-reads today, see §6 |
 | Contention | Not needed for most games; stage H |
 
 New modules, in the layout [boot-and-test.md](boot-and-test.md) §2 already anticipates:
-`spectrum/snapshot.rs`, `spectrum/tape.rs`, and a beeper that lives in `spectrum/ula.rs`
-beside the port it comes out of.
+`spectrum/snapshot.rs` (**done**, `.sna` only), `spectrum/tape.rs`, and a beeper that
+lives in `spectrum/ula.rs` beside the port it comes out of.
+
+Neither loader has yet read a file written by another program — the fixtures are all
+built here. A `fetch.sh` for a few freely distributable snapshots, on the pattern of
+[tests/vectors/fetch.sh](../tests/vectors/fetch.sh), is the obvious next safety net.
+
+One thing §1 turned up that was worth knowing before writing the `.z80` loader: a
+round-trip through `.sna` is *not* byte-identical in RAM. The format has PC pushed onto
+the stack, so the two bytes below `SP` come back holding it. They are free stack and no
+program can tell, but a test that compares all 49152 bytes has to know.
 
 ## 1. `.sna` — the shortest path to a game on screen
 
@@ -70,8 +79,15 @@ Worth doing straight after `.sna`, because it restores through the same path.
 - **Version 1**: a 30-byte header, uncompressed or RLE'd 48K.
 - **Versions 2 and 3**: `PC` at offset 6 reads as zero, and an extra header length word
   at offset 30 says which. RAM arrives in per-page blocks with their own headers.
-- **RLE**: `ED ED count byte`. A version 1 compressed block ends with `00 ED ED 00`.
-  Note that a literal `ED` pair in the data is encoded, and a single `ED` is not.
+- **RLE**: `ED ED count byte`, for runs of five or more, and for runs of `ED` from two
+  upwards. A version 1 compressed block ends with `00 ED ED 00` — a zero count, which no
+  real run can have.
+- **The rule that is easy to miss**: a literal `ED` must always be followed by a literal
+  byte, never by an encoded run. Otherwise that `ED` sits against the `ED ED` of the run
+  and no decoder can tell which of the three EDs opens the marker. Since a run of two or
+  more EDs is always encoded, the byte after a literal `ED` is never another `ED`, so
+  emitting it literally is always safe. Getting this wrong in an *encoder* produces files
+  that every emulator mis-loads.
 
 The 128K pages in a version 2/3 file are the one part with nowhere to go on a 48K
 machine — reject those with a clear error rather than loading half of them.
@@ -155,9 +171,9 @@ will look wrong; they are the minority, and the fix is the same phase H work.
 
 | Step | Deliverable | Proof |
 |---|---|---|
-| 1 | `.sna` load and save | Round-trip: save the booted machine, reload it, every register and the screen match |
-| 2 | A file argument on `zxbevy` and `zxheadless` | A real snapshot plays in the window |
-| 3 | `.z80` versions 1–3, 48K only | Loads what version 1 and 2 files a `.sna` round-trip cannot reach |
+| ✅ 1 | `.sna` load and save | Round-trip: save the booted machine, reload it, every register and the screen match. [tests/snapshot.rs](../tests/snapshot.rs) |
+| ✅ 2 | A file argument on `zxbevy` and `zxheadless` | `zxbevy game.z80`, and `zxheadless --load`/`--save-sna` |
+| ✅ 3 | `.z80` versions 1–3, 48K only | Every header field at its offset, RLE against an independent encoder, pages placed by number, 128K refused |
 | 4 | Kempston, and `0x00` for unattached ports | A game that auto-detects a joystick behaves |
 | 5 | `.tap` through the `L0556` trap | A standard-speed game loads from tape |
 | 6 | Beeper through `cpal` | The ROM's key click, then a game's music |

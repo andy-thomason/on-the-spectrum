@@ -7,6 +7,7 @@
 pub mod keyboard;
 pub mod memory;
 pub mod screen;
+pub mod snapshot;
 pub mod ula;
 
 use crate::z80::{Bus, Cpu};
