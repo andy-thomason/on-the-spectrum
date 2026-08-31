@@ -140,6 +140,23 @@ emulation is small:
    a screech.
 3. Push the samples into a ring buffer the audio callback drains.
 
+**What to check it against.** Manic Miner in-game, measured through a bus that tallied
+the port writes:
+
+| | |
+|---|---|
+| Writes to port `0xFE` | 10752 per second |
+| Of those, ones that *change* bit 4 | 124 per second |
+| Half-cycles | 3240 T (540 Hz), 3440 T (509 Hz), 3840 T (456 Hz) |
+| Gaps between bursts | ~220600 T |
+
+That is "In the Hall of the Mountain King": bursts of about thirty transitions making a
+28 ms note, eleven or so notes a second, with the game loop running in the silences. Two
+things follow. Ninety-eight per cent of the writes to the port do not move the speaker at
+all, so a beeper that resamples on every `OUT` will do a great deal of nothing. And the
+shortest half-cycle is 0.93 ms against 22.7 µs for a 44100 Hz sample, so the sample rate
+is nowhere near the difficulty.
+
 **The plumbing is the hard part, not the emulation.** `bevy_audio` is built for playing
 assets, not for streaming a buffer generated every 20 ms, and it is not in the `2d`
 feature set the UI uses. Expect to add `cpal` (or `rodio`) directly and to spend the time
